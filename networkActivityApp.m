@@ -19,6 +19,8 @@ classdef networkActivityApp < matlab.apps.AppBase
         AnalysisMenuDetect
         AnalysisMenuQuantify
         AnalysisMenuReCalculate
+        PlotMenu
+        PlotMenuRaster
         OptionMenu
         OptionMenuSettings
         OptionMenuDebug
@@ -425,6 +427,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             warning('off', 'all');
             % Create a raster plot
             Fs = app.imgT.ImgProperties(imgIdx,4);
+            nFrames = app.imgT.ImgProperties(imgIdx,3);
             tempLoc = cellfun(@(x) round(x * Fs), app.imgT.SpikeLocations{imgIdx}, 'UniformOutput', false);
             tempDura = cellfun(@(x) round(x * Fs), app.imgT.SpikeWidths{imgIdx}, 'UniformOutput', false);
             tempRast = app.imgT.SpikeRaster{imgIdx};
@@ -438,9 +441,22 @@ classdef networkActivityApp < matlab.apps.AppBase
                     end
                 end
             end
+            % Calculate the spike frequency for single cell
+            totTime = (nFrames-1) / Fs;
+            tempFreq = cellfun(@(x) numel(x) / totTime, tempLoc);
+            % Calculate the synchronous frequency (>80% of the cells firing +- 1 frames)
+            allLocs = sort(cell2mat(tempLoc'));
+            uniLocs = unique(allLocs);
+            synLocs = 0;
+            for l = 1:numel(uniLocs)
+                uL = uniLocs(l);
+                if (sum(allLocs==uL)/nCell) >= 0.8
+                    synLocs = synLocs + 1;
+                end
+            end
+            % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
-            % Calculate the spike frequency
-            
+            app.imgT.CellFrequency{imgIdx} = tempFreq;
             warning('on', 'all');
         end
         
@@ -585,6 +601,19 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.hStack.CData = imadjust(img2, [hMinStack.Value hMaxStack.Value]/2^16);
                 hLineStack.XData = [hMinStack.Value hMaxStack.Value];
             end
+        end
+        
+        function rasterPlot(app, varX, varY)
+            figure()
+            rAx = axes();
+            plot(rAx, varX, varY, 'k', 'LineWidth', 2)
+            rAx.Box = 'off';
+            rAx.YLim = [0, size(varY,1)];
+            rAx.YTick = 1:size(varY,1);
+            rAx.TickDir = 'out';
+            rAx.YLabel.String = 'Cell number';
+            rAx.XLabel.String = 'Time (s)';
+            rAx.Title.String = regexprep(app.curStak, '_', ' ');
         end
    
     end
@@ -746,11 +775,14 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.fullT = networkFiles.fullT;
                 end
                 if isfield(networkFiles, 'dicT') && isfield(networkFiles, 'imgT')
-                    app.RadioSingleTrace.Enable = 'on';
-                    app.RadioAllMean.Enable = 'on';
-                    app.curDIC = app.dicT.CellID{1};
-                    if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
-                        detrendData(app)
+                    if ~isempty(app.imgT.SpikeLocations{1})
+                        app.RadioSingleTrace.Enable = 'on';
+                        app.RadioAllMean.Enable = 'on';
+                        app.PlotMenu.Enable = 'on';
+                        app.curDIC = app.dicT.CellID{1};
+                        if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
+                            detrendData(app)
+                        end
                     end
                     updateDIC(app, true)
                 else
@@ -889,6 +921,15 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             app.curDIC = app.dicT{startDIC, 'CellID'};
             getCellMask(app, startDIC)
+        end
+        
+        function PlotRasterSelected(app, event)
+            imgID = contains(app.imgT.CellID, app.curStak);
+            Fs = app.imgT.ImgProperties(imgID,4);
+            tempRaster = app.imgT.SpikeRaster{imgID};
+            nFrames = size(tempRaster,2);
+            time = (0:nFrames-1)/Fs;
+            rasterPlot(app, time, tempRaster)
         end
         
         function OptionDebugSelected(app, event)
@@ -1173,6 +1214,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'MenuSelectedFcn', createCallbackFcn(app, @AnalysisMenuQuantifySelected, true));
             app.AnalysisMenuReCalculate = uimenu(app.AnalysisMenu, 'Text', 'Re-calculate traces',...
                 'Separator', 'on', 'MenuSelectedFcn', createCallbackFcn(app, @AnalysisMenuReCalculateSelected, true));
+            app.PlotMenu = uimenu(app.Figure, 'Text', 'Plot', 'Enable', 'off');
+            app.PlotMenuRaster = uimenu(app.PlotMenu, 'Text', 'Raster Plot',...
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
             app.OptionMenu = uimenu(app.Figure, 'Text', 'Options');
             app.OptionMenuSettings = uimenu(app.OptionMenu, 'Text', 'Settings',...
                 'MenuSelectedFcn', createCallbackFcn(app, @OptionMenuSelected, true), 'Enable', 'on');
