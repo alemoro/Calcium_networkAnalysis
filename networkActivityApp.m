@@ -464,16 +464,34 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Calculate the synchronous frequency (>80% of the cells firing +- 1 frames)
             allLocs = sort(cell2mat(tempLoc'));
             uniLocs = unique(allLocs);
-            synLocs = 0;
-            for l = 1:numel(uniLocs)
-                uL = uniLocs(l);
-                if (sum(allLocs==uL)/nCell) >= 0.8
-                    synLocs = synLocs + 1;
+            syncLocs = [];
+            syncPC = [];
+            synLoc = 1;
+            for loc = 1:numel(uniLocs)
+                locRange = [];
+                if loc == 1
+                    locRange = [uniLocs(loc), uniLocs(loc)+2];
+                elseif loc == numel(uniLocs)
+                    locRange = [uniLocs(loc)-2, uniLocs(loc)];
+                else
+                    if uniLocs(loc) - uniLocs(loc-1) > 1
+                        locRange = [uniLocs(loc), uniLocs(loc)+2];
+                    end
+                end
+                if ~isempty(locRange)
+                    synLocs(synLoc) = uniLocs(loc)/Fs;
+                    synPC(synLoc) = sum(allLocs>=locRange(1) & allLocs<=locRange(2))/nCell*100;
+                    synLoc = synLoc + 1;
                 end
             end
+            % Calculate the network frequency as the number of spikes that have > 80% of neurons firing
+            netFreq = sum(synPC >= 80) / totTime;
             % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
             app.imgT.CellFrequency{imgIdx} = tempFreq;
+            app.imgT.SynchronousLocations{imgIdx} = synLocs;
+            app.imgT.SynchronousPercentages{imgIdx} = synPC;
+            app.imgT.NetworkFrequency(imgIdx) = netFreq;
             warning('on', 'all');
         end
         
@@ -897,19 +915,20 @@ classdef networkActivityApp < matlab.apps.AppBase
         end
         
         function AnalysisMenuDetectSelected(app, event)
-            answer = questdlg('Detect spike in which set?', 'Spike detection', 'All', 'Selected', 'All');
+            answer = questdlg('Detect spike in which set?', 'Spike detection', 'All FOVs', 'Current set', 'Current FOV', 'All FOVs');
             switch answer
-                case 'All'
+                case 'All FOVs'
                     imgFltr = find(~cellfun(@isempty, app.imgT{:,'RawIntensity'}));
-                case 'Selected'
+                case 'Current set'
                     dicID = app.dicT.ExperimentID{contains(app.dicT.CellID, app.curDIC)};
                     imgFltr = find(strcmp(app.imgT.ExperimentID, dicID));
-                otherwise
+                case 'Current FOV'
+                    imgFltr = find(strcmp(app.imgT.CellID, app.curStak));
             end
             nImg = numel(imgFltr);
             hWait = waitbar(0, 'Detecting spike in data');
             for i = 1:nImg
-                waitbar(i/nImg, hWait, sprintf('Detecting spike in data %0.2f%%', i/nImg));
+                waitbar(i/nImg, hWait, sprintf('Detecting spike in data %0.2f%%', i/nImg*100));
                 detectSpike(app, imgFltr(i))
             end
             delete(hWait)
@@ -924,7 +943,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             nImg = numel(imgFltr);
             hWait = waitbar(0, 'Collecting spike data');
             for i = 1:nImg
-                waitbar(i/nImg, hWait, sprintf('Collecting spike data %0.2f%%', i/nImg));
+                waitbar(i/nImg, hWait, sprintf('Collecting spike data %0.2f%%', i/nImg*100));
                 quantifySpikes(app, imgFltr(i))
             end
             delete(hWait)
@@ -1102,10 +1121,13 @@ classdef networkActivityApp < matlab.apps.AppBase
                     break
                 end
                 %pointX = round(round(pointX) * Fs);
-                delPeak = find(spikeData > pointX-10/Fs & spikeData < pointX+10/Fs);
+                delPeak = find(spikeData > pointX-30/Fs & spikeData < pointX+30/Fs);
                 if numel(delPeak) > 1
-                    % Narrow down to 2 frames
-                    delPeak = find(spikeData > pointX-2/Fs & spikeData < pointX+2/Fs);
+                    delPeak = find(spikeData > pointX-10/Fs & spikeData < pointX+10/Fs);
+                    if numel(delPeak) > 1
+                        % Narrow down to 2 frames
+                        delPeak = find(spikeData > pointX-2/Fs & spikeData < pointX+2/Fs);
+                    end
                 end
                 if numel(delPeak) > 1
                     hWarn = warndlg('Multiple peaks detected at this location', 'Delete peak');
@@ -1177,6 +1199,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                 if strcmpi(sel, 'alt')
                     break
                 end
+                if isempty(pointX)
+                    tempSpikeData = nan;
+                    break
+                end
                 pointF = round(round(pointX) * Fs);
                 [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-app.options.PeakMaxDuration:pointF+app.options.PeakMaxDuration),...
                     Fs, 'SortStr', 'descend');
@@ -1209,7 +1235,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     DicMenuSelectSelected(app, event)
                 case "d" % delete all events
                     bDel = questdlg('Delete all the event?', 'Delete events');
-                    if bDel
+                    if strcmp(bDel, 'Yes')
                         imgFltr = find(contains(app.imgT.CellID, app.curStak));
                         cellFltr = app.curCell(1);
                         Fs = app.imgT.ImgProperties(imgFltr,4);
