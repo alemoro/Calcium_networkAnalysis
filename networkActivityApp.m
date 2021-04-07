@@ -27,6 +27,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         AxesDIC
         bcDIC
         AxesStack
+        manualReg
         AxesPlot
         ToggleViewStack
         SliderImageStack
@@ -224,7 +225,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.SliderImageStack.SliderStep = [1/(imgNumber-1), 1/(imgNumber-1)];
             app.SliderImageStack.Min = 1;
             app.SliderImageStack.Max = imgNumber;
-            s = imshow(app.movieData(:,:,1), [0 5000], 'Parent', app.AxesStack);
+            s = imshow(app.movieData(:,:,1), [0 9000], 'Parent', app.AxesStack);
             app.curSlice = s;
             app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
             hold(app.AxesPlot, 'on');
@@ -265,9 +266,24 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
         end
         
+        % Function to manually evaluate the drift between images
+        function manualRegistrationPressed(app, event)
+            whatDIC = contains(app.dicT.CellID, app.curDIC);
+            dicImage2 = app.dicT.CorImage{whatDIC};
+            imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
+            imgTif = imread(imgFile);
+            hManReg = figure('Name', 'Manual registration');
+            imshowpair(dicImage2, imgTif);
+            [x, y] = ginput(2);
+            app.imgT.RegEst{contains(app.imgT.Filename, app.curStak)} = [1,0,0;0,1,0;x(1)-x(2),y(1)-y(2),1];
+            close(hManReg);
+            ListImagesChange(app, event)
+        end
+        
         % Calculate intensity over the regions
         function getIntensityvalues(app)
             % First get the image where to run the analysis
+            warning('off', 'all');
             togglePointer(app);
             tempMask = app.cellsMask;
             tempExp = app.dicT.ExperimentID{contains(app.dicT.CellID, app.curDIC)};
@@ -331,6 +347,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             detrendData(app)
             delete(hWait);
             togglePointer(app);
+            warning('on', 'all');
         end
         
         % Detrend the data using a moving median or polynomial fit
@@ -795,6 +812,9 @@ classdef networkActivityApp < matlab.apps.AppBase
         end
         
         function FileMenuSaveSelected(app, event)
+            % First save the settings
+            saveSettings(app)
+            % Then save the data
             oldDir = cd(app.options.LastPath);
             [fileName, filePath] = uiputfile('*.mat', 'Save network data');
             savePath = fullfile(filePath, fileName);
@@ -966,7 +986,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                     end
                     imgTif = imwarp(imgTif, tformEstimate, 'OutputView', imgOut);
                 end
-                app.hStack = imshow(imgTif, 'Parent', app.AxesStack);
+                app.minMax.Stack = stretchlim(imgTif,[0 .999]);
+                app.hStack = imshow(imadjust(imgTif, app.minMax.Stack), 'Parent', app.AxesStack);
                 app.movieData = [];
                 app.curSlice = [];
                 app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
@@ -1081,7 +1102,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     break
                 end
                 %pointX = round(round(pointX) * Fs);
-                delPeak = find(spikeData > pointX-5/Fs & spikeData < pointX+5/Fs);
+                delPeak = find(spikeData > pointX-10/Fs & spikeData < pointX+10/Fs);
                 if numel(delPeak) > 1
                     % Narrow down to 2 frames
                     delPeak = find(spikeData > pointX-2/Fs & spikeData < pointX+2/Fs);
@@ -1127,7 +1148,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             spikeData(3,:) = spikeWid{cellFltr,1};
             tempSpikeData = nan(3,1);
             % Get the trace and the detection paramethers
-            trace = cell2mat(app.imgT{imgFltr, 'FF0Intensity'});
+            trace = cell2mat(app.imgT{imgFltr, 'DetrendData'});
             trace = trace(cellFltr,:);
             smoothTrace = wdenoise(trace);
             spikeLeng = app.options.PeakMaxDuration / Fs;
@@ -1178,6 +1199,51 @@ classdef networkActivityApp < matlab.apps.AppBase
             updatePlot(app);
         end
         
+        function keyPressed(app, event)
+            switch event.Key
+                case "a" % Add new peaks
+                    TogglePeakAddPress(app, event)
+                case "r" % Remove new peaks
+                    TogglePeakRemovePress(app, event)
+                case "s" % Select new DIC
+                    DicMenuSelectSelected(app, event)
+                case "d" % delete all events
+                    bDel = questdlg('Delete all the event?', 'Delete events');
+                    if bDel
+                        imgFltr = find(contains(app.imgT.CellID, app.curStak));
+                        cellFltr = app.curCell(1);
+                        Fs = app.imgT.ImgProperties(imgFltr,4);
+                        spikeLoc = app.imgT{imgFltr, 'SpikeLocations'}{:};
+                        spikeInt = app.imgT{imgFltr, 'SpikeIntensities'}{:};
+                        spikeWid = app.imgT{imgFltr, 'SpikeWidths'}{:};
+                        spikeData = spikeLoc{cellFltr,1};
+                        keepEvent = false(size(spikeData));
+                        app.imgT{imgFltr, 'SpikeLocations'}{1}{cellFltr} = spikeLoc{cellFltr, 1}(keepEvent);
+                        app.imgT{imgFltr, 'SpikeIntensities'}{1}{cellFltr} = spikeInt{cellFltr, 1}(keepEvent);
+                        app.imgT{imgFltr, 'SpikeWidths'}{1}{cellFltr} = spikeWid{cellFltr, 1}(keepEvent);
+                        updatePlot(app);
+                    end 
+                case "rightarrow" % move to next cell
+                    if app.RadioSingleTrace.Value
+                        CellNumberPlusPress(app, event)
+                    end
+                case "leftarrow" % move to previous cell
+                    if app.RadioSingleTrace.Value
+                        CellNumberMinorPress(app, event)
+                    end
+                case "uparrow" % move to previous FOV
+                    if app.ListImages.Value > 1
+                        app.ListImages.Value = app.ListImages.Value - 1;
+                        ListImagesChange(app, event);
+                    end
+                case "downarrow" % move to next FOV
+                    if app.ListImages.Value < numel(app.ListImages.String)
+                        app.ListImages.Value = app.ListImages.Value + 1;
+                        ListImagesChange(app, event);
+                    end
+            end
+        end
+        
     end
     
     % Create the UIFigure and components
@@ -1187,7 +1253,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.Figure = figure('Units', 'pixels', 'Visible', 'off',...
                 'Position', [screenSize(3)/5 screenSize(4)/6 1250 850],...
                 'Name', 'Network Activity', 'ToolBar', 'none', 'MenuBar', 'none',...
-                'NumberTitle', 'off', 'WindowScrollWheelFcn', @(~,event)SliderImageStackMoved(app, event));
+                'NumberTitle', 'off', 'WindowScrollWheelFcn', @(~,event)SliderImageStackMoved(app, event),...
+                'KeyPressFcn', @(~,event)keyPressed(app, event));
             movegui(app.Figure, 'center');
             % Create the menu bar
             app.FileMenu = uimenu(app.Figure, 'Text', 'File');
@@ -1231,6 +1298,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Visible', 'off', 'Callback', createCallbackFcn(app, @bcDICpressed, true));
             app.AxesStack = axes('Units', 'pixels', 'Position', [550 410 400 400],...
                 'Visible', 'off');
+            app.manualReg = uicontrol(app.Figure, 'Style', 'pushbutton', 'Units', 'pixels',...
+                'Position', [550 810 80 20], 'String', 'Registration',...
+                'Visible', 'on', 'Callback', createCallbackFcn(app, @manualRegistrationPressed, true));
             app.AxesStack.Title.String = 'Ca^{2+} Movie';
             app.SliderImageStack = uicontrol(app.Figure, 'Style', 'slider',...
                 'Units', 'pixels', 'Position', [550 385 400 20],...
@@ -1488,7 +1558,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
         end
         
-        function delete(app)
+        function saveSettings(app)
             % Before closing save the settings
             s = settings;
             s.networkActivity.StillName.PersonalValue = app.options.StillName;
@@ -1505,6 +1575,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             s.networkActivity.LastPath.PersonalValue = app.options.LastPath;
             s.networkActivity.Registration.PersonalValue = app.options.Registration;
             s.networkActivity.Reference.PersonalValue = app.options.Reference;
+        end
+        
+        function delete(app)
             % If the data is not saved, ask if it needs to be saved
             answer = questdlg('Do you want to save the data?', 'Save before closing');
             switch answer
