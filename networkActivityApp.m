@@ -409,26 +409,27 @@ classdef networkActivityApp < matlab.apps.AppBase
             spikeDist = app.options.PeakMinDistance / Fs;
             spikeMinLeng = app.options.PeakMinDuration / Fs;
             spikeMaxLeng = app.options.PeakMaxDuration / Fs;
+            % for parfor settings
+            switch app.options.DetectTrace
+                case 'Raw'
+                    gradientTrace = detrendData;
+                case 'Gradient'
+                    gradientTrace = gradient(smoothData);
+                case 'Smooth'
+                    gradientTrace = smoothData;
+            end
+            switch app.options.PeakMinHeight
+                case 'MAD'
+                    spikeThr = median(gradientTrace,2) + mad(gradientTrace,0,2) * app.options.SigmaThr;
+                case 'Normalized MAD'
+                    spikeThr = median(gradientTrace,2) + mad(gradientTrace,0,2) * app.options.SigmaThr * (-1 / (sqrt(2) * erfcinv(3/2)));
+                case 'Rolling StDev'
+                    warndlg(sprintf('Not implemented yet!\nUsed MAD instead.'), 'Failed detection')
+                    spikeThr = median(gradientTrace,2) + mad(gradientTrace,0,2) * app.options.SigmaThr;
+            end
             for trace = 1:nTraces
-                switch app.options.DetectTrace
-                    case 'Raw'
-                        gradientTrace = detrendData(trace,:);
-                    case 'Gradient'
-                        gradientTrace = gradient(smoothData(trace,:));
-                    case 'Smooth'
-                        gradientTrace = smoothData(trace,:);
-                end
-                switch app.options.PeakMinHeight
-                    case 'MAD'
-                        spikeThr = median(gradientTrace) + mad(gradientTrace) * app.options.SigmaThr;
-                    case 'Normalized MAD'
-                        spikeThr = median(gradientTrace) + mad(gradientTrace) * app.options.SigmaThr * (-1 / (sqrt(2) * erfcinv(3/2)));
-                    case 'Rolling StDev'
-                        warndlg(sprintf('Not implemented yet!\nUsed MAD instead.'), 'Failed detection')
-                        spikeThr = median(gradientTrace) + mad(gradientTrace) * app.options.SigmaThr;
-                end
-                [spikeInts{trace,1}, spikeLocs{trace,1}, spikeWidths{trace,1}] = findpeaks(gradientTrace, Fs, 'MinPeakDistance', spikeDist, ...
-                    'MinPeakHeight', spikeThr, 'MinPeakProminence', spikeProm, 'MinPeakWidth', spikeMinLeng, 'MaxPeakWidth', spikeMaxLeng);
+                [spikeInts{trace,1}, spikeLocs{trace,1}, spikeWidths{trace,1}] = findpeaks(gradientTrace(trace,:), Fs, 'MinPeakDistance', spikeDist, ...
+                    'MinPeakHeight', spikeThr(trace), 'MinPeakProminence', spikeProm, 'MinPeakWidth', spikeMinLeng, 'MaxPeakWidth', spikeMaxLeng);
             end
             spikeRaster = spikeRaster .* repmat((1:nTraces)', 1, nFrames);
             app.imgT.SpikeLocations{imgIdx} = spikeLocs;
@@ -461,7 +462,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Calculate the spike frequency for single cell
             totTime = (nFrames-1) / Fs;
             tempFreq = cellfun(@(x) numel(x) / totTime, tempLoc);
-            % Calculate the synchronous frequency (>80% of the cells firing +- 1 frames)
+            % Calculate the synchronous frequency (cells firing +- 1 frames)
             allLocs = sort(cell2mat(tempLoc'));
             uniLocs = unique(allLocs);
             syncLocs = [];
@@ -486,12 +487,17 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             % Calculate the network frequency as the number of spikes that have > 80% of neurons firing
             netFreq = sum(synPC >= 80) / totTime;
+            % Calculate the interspike intervals
+            interSpikeInterval = cellfun(@(x) diff(x) / Fs, tempLoc, 'UniformOutput', false);
+            % Calculate if there are bursts
+            
             % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
             app.imgT.CellFrequency{imgIdx} = tempFreq;
             app.imgT.SynchronousLocations{imgIdx} = synLocs;
             app.imgT.SynchronousPercentages{imgIdx} = synPC;
             app.imgT.NetworkFrequency(imgIdx) = netFreq;
+            app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
             warning('on', 'all');
         end
         
@@ -784,27 +790,47 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = filePath;
                 togglePointer(app)
                 networkFiles = load(fullfile(filePath, fileName));
-                if isfield(networkFiles, 'dicT')
-                    app.dicT = networkFiles.dicT;
-                    app.DicMenu.Enable = true;
-                    app.bcDIC.Visible = true;
-                end
-                if isfield(networkFiles, 'imgT')
-                    app.imgT = networkFiles.imgT;
-                    app.AnalysisMenu.Enable = true;
-                end
                 if isfield(networkFiles, 'imgStore')
                     if ~isfile(networkFiles.imgStore.Files(1))
                         % Files are re-located
                         newPath = uigetdir(app.options.LastPath, 'Relocate files');
-                        app.imgDatastore = imageDatastore(newPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
-                        dicFltr = contains(app.imgDatastore.Files, app.options.StillName);
-                        app.dicT.Filename = app.imgDatastore.Files(dicFltr);
-                        app.imgT.Filename = app.imgDatastore.Files(~dicFltr);
-                    else
+                        networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
+                        dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
+                        networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
+                        networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
+                    end
+                    if isempty(app.imgDatastore)
                         app.imgDatastore = networkFiles.imgStore;
+                    else
+                        oldImgPath = unique(cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false));
+                        allImgPaths = [oldImgPath; fileparts(networkFiles.imgStore.Files{1})];
+                        app.imgDatastore = imageDatastore(allImgPaths);
                     end
                     app.ToggleViewStack.Enable = 'on';
+                end
+                if isfield(networkFiles, 'dicT')
+                    if isempty(app.dicT)
+                        app.dicT = networkFiles.dicT;
+                    else
+                        app.dicT = [app.dicT; networkFiles.dicT];
+                    end
+                    app.DicMenu.Enable = true;
+                    app.bcDIC.Visible = true;
+                end
+                if isfield(networkFiles, 'imgT')
+                    if isempty(app.imgT)
+                        app.imgT = networkFiles.imgT;
+                    else
+                        if numel(app.imgT.Properties.VariableNames) ~= numel(networkFiles.imgT.Properties.VariableNames)
+                            % We need to add columns
+                            missVars = setdiff(app.imgT.Properties.VariableNames, networkFiles.imgT.Properties.VariableNames);
+                            for missVar = missVars
+                                networkFiles.imgT = addvars(networkFiles.imgT, nan(size(networkFiles.imgT,1), 1), 'NewVariableNames',missVar);
+                            end
+                        end
+                        app.imgT = [app.imgT; networkFiles.imgT];
+                    end
+                    app.AnalysisMenu.Enable = true;
                 end
                 if isfield(networkFiles, 'fullT')
                     app.fullT = networkFiles.fullT;
@@ -927,10 +953,12 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             nImg = numel(imgFltr);
             hWait = waitbar(0, 'Detecting spike in data');
+            tic
             for i = 1:nImg
                 waitbar(i/nImg, hWait, sprintf('Detecting spike in data %0.2f%%', i/nImg*100));
                 detectSpike(app, imgFltr(i))
             end
+            toc
             delete(hWait)
             app.TogglePeakRemove.Enable = 'on';
             app.TogglePeakAdd.Enable = 'on';
@@ -947,6 +975,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 quantifySpikes(app, imgFltr(i))
             end
             delete(hWait)
+            app.PlotMenu.Enable = 'on';
         end
         
         function AnalysisMenuReCalculateSelected(app, event)
@@ -1196,6 +1225,12 @@ classdef networkActivityApp < matlab.apps.AppBase
                 axes(app.AxesPlot);
                 [pointX, ~] = ginput(1);
                 sel = get(app.Figure, 'SelectionType');
+                if strcmp(event.EventName, 'KeyPress')
+                    currDel = findobj(app.AxesPlot, 'LineWidth', 1.5, 'XData', tempSpikeData(2,tS));
+                    tempSpikeData(1,tS-1) = [];
+                    tempSpikeData(2,tS-1) = [];
+                    tempSpikeData(3,tS-1) = [];
+                else
                 if strcmpi(sel, 'alt')
                     break
                 end
@@ -1211,6 +1246,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 tempSpikeData(3,tS) = tempWidths(1);
                 plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
                 tS = tS + 1;
+                end
             end
             % Add the data to the table and sort in order of event
             if ~isnan(tempSpikeData(1))
@@ -1267,6 +1303,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                         app.ListImages.Value = app.ListImages.Value + 1;
                         ListImagesChange(app, event);
                     end
+                case "p" % place ROI
+                    DicMenuPlaceRoiSelected(app, event)
             end
         end
         
@@ -1398,7 +1436,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             shapeOptions = {'Square', 'Circle'};
             heightOptions = {'MAD', 'Normalized MAD', 'Rolling StDev'};
             traceOptions = {'Raw', 'Gradient', 'Smooth'};
-            detrendOptions = {'None', 'Moving median', 'Polinomial'};
+            detrendOptions = {'None', 'Moving median', 'Polynomial'};
             screenSize = get(0, 'ScreenSize');
             optFigure = figure('Units', 'pixels', 'Visible', 'on',...
                 'Position', [screenSize(3)/2 screenSize(4)/2 500 500],...
@@ -1510,8 +1548,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.DetrendSize = str2double(hDetWin.String);
                 cancelOptionPressed(app, event);
                 if ~isempty(app.imgT)
-                    updatePlot(app);
                     detrendData(app)
+                    updatePlot(app);
                 end
             end
             function resetOptionPressed(app, event)
