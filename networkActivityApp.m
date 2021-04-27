@@ -298,8 +298,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 tic
                 imgData = loadTiffFirstTime(app, imgFltr(i), hWait);
                 % Adjust the orientation of the image
-                imgData = flip(imgData, 1);
-                imgData = imrotate(imgData, -90);
+                %imgData = flip(imgData, 1);
+                %imgData = imrotate(imgData, -90);
                 nFrames = size(imgData, 3);
                 % Data might need registration
                 if app.options.Registration && ~contains(app.imgT{imgFltr(i), 'CellID'}, app.options.Reference)
@@ -329,7 +329,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 nRoi = size(tempRoi,1);
                 roiIntensities = zeros(nRoi, nFrames);
                 for roi = 1:nRoi
-                    roiIntensities(roi,:) = mean(mean(imgData(tempMask{roi,1}, tempMask{roi,2}, :))); % 5 is the radius, needs to be set as option
+                    %roiIntensities(roi,:) = mean(mean(imgData(tempMask{roi,2}(1):tempMask{roi,2}(3), tempMask{roi,1}(1):tempMask{roi,1}(2), :))); % 5 is the radius, needs to be set as option
+                    roiIntensities(roi,:) = mean(mean(imgData(tempMask{roi,1}(1):tempMask{roi,1}(2), tempMask{roi,2}(1):tempMask{roi,2}(3), :))); % 5 is the radius, needs to be set as option
                 end
                 % Detect the minimum intensity in 10 region of the recordings to calculate the deltaF/F0
                 frameDividers = [1:round(nFrames / 10):nFrames, nFrames];
@@ -379,11 +380,16 @@ classdef networkActivityApp < matlab.apps.AppBase
             imgHeight = app.imgT.ImgProperties(imgIdx,2);
             imgNumber = app.imgT.ImgProperties(imgIdx,3);
             imgData = zeros(imgWidth, imgHeight, imgNumber, 'uint16');
-            startPoint = cell2mat(app.imgT{imgIdx,'ImgByteStrip'});
+            %startPoint = cell2mat(app.imgT{imgIdx,'ImgByteStrip'});
             imgStackID = fopen(imgFiles, 'r');
-            for n = 1:imgNumber
-                fseek(imgStackID, startPoint(n), 'bof');
-                imgData(:,:,n) = fread(imgStackID, [imgWidth, imgHeight], 'uint16=>uint16');
+            tstack = Tiff(imgFiles);
+            imgData(:,:,1) = tstack.read();
+            for n = 2:imgNumber
+                %fseek(imgStackID, startPoint(n), 'bof');
+                %imgData(:,:,n) = fread(imgStackID, [imgWidth, imgHeight], 'uint16=>uint16');
+                nextDirectory(tstack);
+                imgData(:,:,n) = tstack.read();
+                %imgData(:,:,n) = imread(imgFiles,n);
             end
             fclose(imgStackID);
         end
@@ -672,7 +678,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = imgPath;
                 % Load the data starting from the DIC/BF/Still image
                 hWait = waitbar(0, 'Loading images data');
-                app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
+                %app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
+                app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif'});
                 app.DicMenu.Enable = 'on';
                 [~,imgFiles] = cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false);
                 % Populate the DIC table
@@ -695,7 +702,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 tempT.Filename = app.imgDatastore.Files(dicFltr);
                 tempT.CellID = imgFiles(dicFltr);
                 if strcmp(app.options.StillName, 'DIC.')
-                    tempT.ExperimentID = cellfun(@(x) x(1:10), tempT.CellID, 'UniformOutput', false);
+                    expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{2}, x{3}), nameParts, 'UniformOutput', false);
+                    tempT.ExperimentID = expIDs(dicFltr);
                 else
                     expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{3}, x{4}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
@@ -738,7 +746,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                         tempT{i+1,4} = imgIDs{i}{2};
                         tempT{i+1,5} = imgIDs{i}{3};
                         tempT{i+1,6} = imgIDs{i}{4};
-                        tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{2}]; % use to link the DIC to the movies
+                        tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{2} '_' imgIDs{i}{3}]; % use to link the DIC to the movies
                     else
                         tempT{i+1,4} = imgIDs{i}{3};
                         tempT{i+1,5} = imgIDs{i}{4};
