@@ -504,6 +504,15 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.SynchronousPercentages{imgIdx} = synPC;
             app.imgT.NetworkFrequency(imgIdx) = netFreq;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
+            % Add the median per spike
+            for isi = 1:size(app.imgT,1)
+                app.imgT.MedianInt(isi) = median(cellfun(@median, app.imgT.SpikeIntensities{isi}));
+                app.imgT.MedianFWHM(isi) = median(cellfun(@median, app.imgT.SpikeWidths{isi}));
+                app.imgT.MedianISI(isi) = median(cellfun(@median, app.imgT.InterSpikeInterval{isi}));
+                app.imgT.MedianInt(isi) = mean(cellfun(@mean, app.imgT.SpikeIntensities{isi}));
+                app.imgT.MedianFWHM(isi) = mean(cellfun(@mean, app.imgT.SpikeWidths{isi}));
+                app.imgT.MedianISI(isi) = mean(cellfun(@mean, app.imgT.InterSpikeInterval{isi}));
+            end
             warning('on', 'all');
         end
         
