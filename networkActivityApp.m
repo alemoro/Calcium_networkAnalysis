@@ -504,15 +504,6 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.SynchronousPercentages{imgIdx} = synPC;
             app.imgT.NetworkFrequency(imgIdx) = netFreq;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
-            % Add the median per spike
-            for isi = 1:size(app.imgT,1)
-                app.imgT.MedianInt(isi) = median(cellfun(@median, app.imgT.SpikeIntensities{isi}));
-                app.imgT.MedianFWHM(isi) = median(cellfun(@median, app.imgT.SpikeWidths{isi}));
-                app.imgT.MedianISI(isi) = median(cellfun(@median, app.imgT.InterSpikeInterval{isi}));
-                app.imgT.MedianInt(isi) = mean(cellfun(@mean, app.imgT.SpikeIntensities{isi}));
-                app.imgT.MedianFWHM(isi) = mean(cellfun(@mean, app.imgT.SpikeWidths{isi}));
-                app.imgT.MedianISI(isi) = mean(cellfun(@mean, app.imgT.InterSpikeInterval{isi}));
-            end
             warning('on', 'all');
         end
         
@@ -970,12 +961,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             nImg = numel(imgFltr);
             hWait = waitbar(0, 'Detecting spike in data');
-            tic
             for i = 1:nImg
                 waitbar(i/nImg, hWait, sprintf('Detecting spike in data %0.2f%%', i/nImg*100));
                 detectSpike(app, imgFltr(i))
             end
-            toc
             delete(hWait)
             app.TogglePeakRemove.Enable = 'on';
             app.TogglePeakAdd.Enable = 'on';
@@ -992,6 +981,17 @@ classdef networkActivityApp < matlab.apps.AppBase
                 quantifySpikes(app, imgFltr(i))
             end
             delete(hWait)
+            % Add the median per spike, consider that not all cells are quantified yet
+            for isi = 1:size(app.imgT,1)
+                if ~isempty(app.imgT.SpikeIntensities{isi})
+                    app.imgT.MedianInt(isi) = median(cellfun(@median, app.imgT.SpikeIntensities{isi}));
+                    app.imgT.MedianFWHM(isi) = median(cellfun(@median, app.imgT.SpikeWidths{isi}));
+                    app.imgT.MedianISI(isi) = median(cellfun(@median, app.imgT.InterSpikeInterval{isi}));
+                    app.imgT.MedianInt(isi) = mean(cellfun(@mean, app.imgT.SpikeIntensities{isi}));
+                    app.imgT.MedianFWHM(isi) = mean(cellfun(@mean, app.imgT.SpikeWidths{isi}));
+                    app.imgT.MedianISI(isi) = mean(cellfun(@mean, app.imgT.InterSpikeInterval{isi}));
+                end
+            end
             app.PlotMenu.Enable = 'on';
         end
         
