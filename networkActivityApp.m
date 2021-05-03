@@ -468,7 +468,16 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Calculate the spike frequency for single cell
             totTime = (nFrames-1) / Fs;
             tempFreq = cellfun(@(x) numel(x) / totTime, tempLoc);
-            % Calculate the synchronous frequency (cells firing +- 1 frames)
+            % Calculate the network event with gaussian smoothing of the sum of the raster (similar to EvA)
+            networkRaster = tempRast;
+            networkRaster(~isnan(networkRaster)) = 1;
+            networkRaster(isnan(networkRaster)) = 0;
+            networkRaster = sum(networkRaster);
+            smoothWindow = gausswin(10);
+            smoothWindow = smoothWindow / sum(smoothWindow);
+            networkRaster = filter(smoothWindow, 1, networkRaster);
+            [networkPeaks, networkLocs, networkFWHM] = findpeaks(networkRaster, Fs, 'WidthReference', 'halfheight');
+            % Calculate the synchronous frequency (cells firing +- 1 frames) ### NEEDS UPDATING ###
             allLocs = sort(cell2mat(tempLoc'));
             uniLocs = unique(allLocs);
             syncLocs = [];
@@ -492,7 +501,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             end
             % Calculate the network frequency as the number of spikes that have > 80% of neurons firing
-            netFreq = sum(synPC >= 80) / totTime;
+            networkFreq = sum(synPC >= 80) / totTime;
+            networkFreqGauss = sum(networkPeaks >= nCell * 0.8) / totTime;
             % Calculate the interspike intervals
             interSpikeInterval = cellfun(@(x) diff(x) / Fs, tempLoc, 'UniformOutput', false);
             % Calculate if there are bursts
@@ -502,8 +512,13 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.CellFrequency{imgIdx} = tempFreq;
             app.imgT.SynchronousLocations{imgIdx} = synLocs;
             app.imgT.SynchronousPercentages{imgIdx} = synPC;
-            app.imgT.NetworkFrequency(imgIdx) = netFreq;
+            app.imgT.NetworkFrequency(imgIdx) = networkFreq;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
+            app.imgT.NetworkPeaksGauss{imgIdx} = networkPeaks;
+            app.imgT.NetworkLocsGauss{imgIdx} = networkLocs;
+            app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
+            app.imgT.NetworkRaster{imgIdx} = networkRaster;
+            app.imgT.NetworkFrequencyGauss{imgIdx} = networkFreqGauss;
             warning('on', 'all');
         end
         
@@ -650,10 +665,13 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
         end
         
-        function rasterPlot(app, varX, varY)
+        function rasterPlot(app, varX, varY, varN)
             figure()
             rAx = axes();
+            hold on
+            area(rAx, varX, varN, 'EdgeColor', 'none', 'FaceColor', 'k', 'FaceAlpha', .3)
             plot(rAx, varX, varY, 'k', 'LineWidth', 2)
+            plot(rAx, [varX(1) varX(end)], ones(2,1) * size(varY,1) * 0.8, 'r')
             rAx.Box = 'off';
             rAx.YLim = [0, size(varY,1)];
             rAx.YTick = 1:size(varY,1);
@@ -987,9 +1005,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.imgT.MedianInt(isi) = median(cellfun(@median, app.imgT.SpikeIntensities{isi}));
                     app.imgT.MedianFWHM(isi) = median(cellfun(@median, app.imgT.SpikeWidths{isi}));
                     app.imgT.MedianISI(isi) = median(cellfun(@median, app.imgT.InterSpikeInterval{isi}));
-                    app.imgT.MedianInt(isi) = mean(cellfun(@mean, app.imgT.SpikeIntensities{isi}));
-                    app.imgT.MedianFWHM(isi) = mean(cellfun(@mean, app.imgT.SpikeWidths{isi}));
-                    app.imgT.MedianISI(isi) = mean(cellfun(@mean, app.imgT.InterSpikeInterval{isi}));
+                    app.imgT.MeanInt(isi) = mean(cellfun(@mean, app.imgT.SpikeIntensities{isi}));
+                    app.imgT.MeanFWHM(isi) = mean(cellfun(@mean, app.imgT.SpikeWidths{isi}));
+                    app.imgT.MeanISI(isi) = mean(cellfun(@mean, app.imgT.InterSpikeInterval{isi}));
                 end
             end
             app.PlotMenu.Enable = 'on';
@@ -1012,9 +1030,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             imgID = contains(app.imgT.CellID, app.curStak);
             Fs = app.imgT.ImgProperties(imgID,4);
             tempRaster = app.imgT.SpikeRaster{imgID};
+            netRaster = app.imgT.NetworkRaster{imgID};
             nFrames = size(tempRaster,2);
             time = (0:nFrames-1)/Fs;
-            rasterPlot(app, time, tempRaster)
+            rasterPlot(app, time, tempRaster, netRaster)
         end
         
         function OptionDebugSelected(app, event)
