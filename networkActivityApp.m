@@ -354,7 +354,8 @@ classdef networkActivityApp < matlab.apps.AppBase
         % Detrend the data using a moving median or polynomial fit
         function detrendData(app)
             tempExp = app.dicT.ExperimentID{contains(app.dicT.CellID, app.curDIC)};
-            imgFltr = find(contains(app.imgT.ExperimentID, tempExp));
+            %imgFltr = find(contains(app.imgT.ExperimentID, tempExp));
+            imgFltr = find(~cellfun(@isempty, app.imgT.FF0Intensity));
             nImages = numel(imgFltr);
             tempDetrend = cell(nImages,1);
             for i = 1:nImages
@@ -822,9 +823,17 @@ classdef networkActivityApp < matlab.apps.AppBase
                         % Files are re-located
                         newPath = uigetdir(app.options.LastPath, 'Relocate files');
                         networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
-                        dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
-                        networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
-                        networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
+                        for ii = size(networkFiles.dicT,1)
+                            [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
+                            networkFiles.dicT.Filename{ii} = fullfile(networkFiles.imgStore.Folders, imgName, imgExt);
+                        end
+                        for ii = size(networkFiles.imgT,1)
+                            [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
+                            networkFiles.imgT.Filename{ii} = fullfile(networkFiles.imgStore.Folders, imgName, imgExt);
+                        end
+                        %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
+                        %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
+                        %networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
                     end
                     if isempty(app.imgDatastore)
                         app.imgDatastore = networkFiles.imgStore;
