@@ -112,8 +112,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             %             app.cellsMask = bwboundaries(dicMask);
             app.cellsMask = cell(numel(r), 2);
             for ij = 1:numel(r)
-                app.cellsMask{ij,1} = [r(ij)-5 r(ij)+5 r(ij)+5 r(ij)-5];
-                app.cellsMask{ij,2} = [c(ij)-5 c(ij)-5 c(ij)+5 c(ij)+5];
+                app.cellsMask{ij,1} = [r(ij)-app.options.RoiSize r(ij)+app.options.RoiSize r(ij)+app.options.RoiSize r(ij)-app.options.RoiSize];
+                app.cellsMask{ij,2} = [c(ij)-app.options.RoiSize c(ij)-app.options.RoiSize c(ij)+app.options.RoiSize c(ij)+app.options.RoiSize];
             end
         end
         
@@ -943,6 +943,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             axes(app.AxesDIC);
             [c, r, ~]= impixel;
             newRoi = [r, c];
+            newRoi(newRoi <= app.options.RoiSize) = app.options.RoiSize + 1;
+            newRoi(newRoi >= app.hDIC.XData(2) - app.options.RoiSize) = app.hDIC.XData(2) - app.options.RoiSize - 1;
             if ~isempty(app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'})
                 newRoi = [cell2mat(app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'}); newRoi];
             end
