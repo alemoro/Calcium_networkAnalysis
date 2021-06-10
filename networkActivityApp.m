@@ -11,6 +11,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         FileMenuLoad
         FileMenuSave
         FileMenuExport
+        FileMenuLabelCondition
         DicMenu
         DicMenuPlaceRoi
         DicMenuRemoveRoi
@@ -75,7 +76,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             drawnow();
         end
-        
+              
         % Populate the Image list
         function populateImageList(app)
             if isempty(app.dicT) || sum(contains(app.dicT.CellID, app.curDIC)) ~= 1
@@ -89,6 +90,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 return
             end
             % if there is data plot the data
+            [~, curStack] = fileparts(app.imgT.Filename{strcmp(app.imgT.CellID,app.ListImages.String{1})});
             app.curStak = app.ListImages.String{1};
             if ~isempty(app.imgT)
                 if ~isempty(cell2mat((app.imgT{strcmp(app.imgT.CellID, app.curStak),'RawIntensity'})))
@@ -112,8 +114,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             %             app.cellsMask = bwboundaries(dicMask);
             app.cellsMask = cell(numel(r), 2);
             for ij = 1:numel(r)
-                app.cellsMask{ij,1} = [r(ij)-5 r(ij)+5 r(ij)+5 r(ij)-5];
-                app.cellsMask{ij,2} = [c(ij)-5 c(ij)-5 c(ij)+5 c(ij)+5];
+                app.cellsMask{ij,1} = [r(ij)-app.options.RoiSize r(ij)+app.options.RoiSize r(ij)+app.options.RoiSize r(ij)-app.options.RoiSize];
+                app.cellsMask{ij,2} = [c(ij)-app.options.RoiSize c(ij)-app.options.RoiSize c(ij)+app.options.RoiSize c(ij)+app.options.RoiSize];
             end
         end
         
@@ -152,7 +154,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.minMax.DIC = stretchlim(dicImage2);
             end
             if app.imgT.ImgProperties(1) < size(dicImage2,1)
-                dicImage2 = imresize(dicImage2, 0.5);
+                dicImage2 = imresize(dicImage2, [app.imgT.ImgProperties(1) app.imgT.ImgProperties(2)]);
             end
             app.hDIC = imshow(imadjust(dicImage2, app.minMax.DIC), 'Parent', app.AxesDIC);
             app.AxesDIC.XLim = [0 size(dicImage2, 1)];
@@ -406,7 +408,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             if any(isnan(detrendData))
                 detrendData(isnan(detrendData)) = 0;
             end
-            smoothData = (wdenoise(detrendData'))'; % wdenoise only works on colums so inverted twice
+            smoothData = wdenoise(detrendData', 'DenoisingMethod', 'BlockJS')'; % wdenoise only works on colums so inverted twice
             % run the find peak on the gradient (first derivative) of the smooth data, using the MAD (median absolute deviation) as threshold
             spikeInts = cell(nTraces, 1);
             spikeLocs = cell(nTraces, 1);
@@ -481,8 +483,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Calculate the synchronous frequency (cells firing +- 1 frames) ### NEEDS UPDATING ###
             allLocs = sort(cell2mat(tempLoc'));
             uniLocs = unique(allLocs);
-            syncLocs = [];
-            syncPC = [];
+            synLocs = [];
+            synPC = [];
             synLoc = 1;
             for loc = 1:numel(uniLocs)
                 locRange = [];
@@ -502,32 +504,33 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             end
             % Calculate the network frequency as the number of spikes that have > 80% of neurons firing
-            networkFreq = sum(synPC >= 80) / totTime;
-            networkFreqGauss = sum(networkPeaks >= max(networkPeaks) * 0.8) / totTime; % Use the maximum number of cells
+            netThreshold = sum(any(~isnan(tempRast), 2)) * 0.8;
+            networkFreq = sum(synPC >= netThreshold) / totTime;
+            networkFreqGauss = sum(networkPeaks >= netThreshold) / totTime; % Use the maximum number of cells
             % Calculate the interspike intervals
             interSpikeInterval = cellfun(@(x) diff(x) / Fs, tempLoc, 'UniformOutput', false);
             % Calculate if there are bursts
             
             % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
-            app.imgT.Partecipation{imgIdx} = sum(any(~isnan(tempRast), 2)) / nCell * 100;
+            app.imgT.Participation(imgIdx) = sum(any(~isnan(tempRast), 2)) / nCell * 100;
             app.imgT.CellFrequency{imgIdx} = tempFreq;
             app.imgT.SynchronousLocations{imgIdx} = synLocs;
             app.imgT.SynchronousPercentages{imgIdx} = synPC;
             app.imgT.NetworkFrequency(imgIdx) = networkFreq;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
+            app.imgT.NetworkFrequencyGauss(imgIdx) = networkFreqGauss;
             app.imgT.NetworkPeaksGauss{imgIdx} = networkPeaks;
             app.imgT.NetworkLocsGauss{imgIdx} = networkLocs;
             app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
             app.imgT.NetworkRaster{imgIdx} = networkRaster;
-            app.imgT.NetworkFrequencyGauss{imgIdx} = networkFreqGauss;
             warning('on', 'all');
         end
         
         % Update the plot
         function updatePlot(app)
             % First get the data
-            imgID = contains(app.imgT.CellID, app.curStak);
+            imgID = contains(app.imgT.Filename, app.curStak);
             tempData = app.imgT.DetrendData{imgID};
             if isempty(tempData)
                 return
@@ -536,7 +539,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 case 'Gradient'
                     tempData = gradient(tempData);
                 case 'Smooth'
-                    tempData = wdenoise(tempData')';
+                    tempData = wdenoise(tempData', 'DenoisingMethod', 'BlockJS')';
             end
             Fs = app.imgT.ImgProperties(imgID,4);
             time = (0:size(tempData, 2)-1) / Fs;
@@ -600,6 +603,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
         end
         
+        % Brightness and contrast (similar to ImageJ)
         function adjustBrightness(app, img1, img2)
             % First get the histogram
             [dicCount, dicLoc] = imhist(img1);
@@ -667,13 +671,14 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
         end
         
+        % Series of plotting functions for data visualization
         function rasterPlot(app, varX, varY, varN)
             figure()
             rAx = axes();
             hold on
             area(rAx, varX, varN, 'EdgeColor', 'none', 'FaceColor', 'k', 'FaceAlpha', .3)
             plot(rAx, varX, varY, 'k', 'LineWidth', 2)
-            plot(rAx, [varX(1) varX(end)], ones(2,1) * size(varY,1) * 0.8, 'r')
+            plot(rAx, [varX(1) varX(end)], ones(2,1) * sum(any(~isnan(varY), 2)) * 0.8, 'r')
             rAx.Box = 'off';
             rAx.YLim = [0, size(varY,1)];
             rAx.YTick = 1:size(varY,1);
@@ -780,6 +785,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                             T = imgInfo(1).ImageDescription;
                             T = regexp(T, '=', 'split');
                             T = sscanf(T{6}, '%f');
+                            if isinf(T)
+                                T = 1/(app.options.Frequency);
+                            end
                         case 'Others'
                             imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
                             if app.options.Frequency > 0
@@ -943,6 +951,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             axes(app.AxesDIC);
             [c, r, ~]= impixel;
             newRoi = [r, c];
+            newRoi(newRoi <= app.options.RoiSize) = app.options.RoiSize + 1;
+            newRoi(newRoi >= app.hDIC.XData(2) - app.options.RoiSize) = app.hDIC.XData(2) - app.options.RoiSize - 1;
             if ~isempty(app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'})
                 newRoi = [cell2mat(app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'}); newRoi];
             end
@@ -1021,6 +1031,11 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             end
             % For the Gaussian fit
+            app.imgT.MeanFreq = cellfun(@mean, app.imgT.CellFrequency);
+            app.imgT.MedianFreq = cellfun(@median, app.imgT.CellFrequency);
+            app.imgT.nCell = cellfun(@(x) size(x,1), app.imgT.RawIntensity);
+            app.imgT.nCell = round(app.imgT.nCell .* app.imgT.Participation / 100);
+            app.imgT.PeakParticipation = cellfun(@mean, app.imgT.NetworkPeaksGauss) ./ app.imgT.nCell * 100;
             app.imgT.MedianNetworkFWHM = cellfun(@nanmedian, app.imgT.NetworkFWHMGauss);
             app.imgT.MedianNetworkISI = cellfun(@(x) nanmedian(diff(x)), app.imgT.NetworkLocsGauss);
             app.imgT.MeanNetworkFWHM = cellfun(@nanmean, app.imgT.NetworkFWHMGauss);
@@ -1059,6 +1074,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         
         function ListImagesChange(app, event)
             warning('off', 'all')
+            [~, curStack] = fileparts(app.imgT.Filename{strcmp(app.imgT.CellID,app.ListImages.String{app.ListImages.Value})});
             app.curStak = app.ListImages.String{app.ListImages.Value};
             togglePointer(app)
             updatePlot(app)
@@ -1252,8 +1268,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Get the trace and the detection paramethers
             trace = cell2mat(app.imgT{imgFltr, 'DetrendData'});
             trace = trace(cellFltr,:);
-            smoothTrace = wdenoise(trace);
-            spikeLeng = app.options.PeakMaxDuration / Fs;
+            smoothTrace = wdenoise(trace, 'DenoisingMethod', 'BlockJS');
+            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) /2;
+            spikeLeng = halfDuration / Fs;
             switch app.options.DetectTrace
                 case 'Raw'
                     detectTrace = trace;
@@ -1290,7 +1307,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     break
                 end
                 pointF = round(round(pointX) * Fs);
-                [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-app.options.PeakMaxDuration:pointF+app.options.PeakMaxDuration),...
+                [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
                     Fs, 'SortStr', 'descend');
                 tempSpikeData(1,tS) = pointX-spikeLeng+tempLocs(1);
                 tempSpikeData(2,tS) = tempInts(1);
@@ -1379,6 +1396,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'MenuSelectedFcn', createCallbackFcn(app, @FileMenuLoadSelected, true));
             app.FileMenuSave = uimenu(app.FileMenu, 'Text', 'Save',...
                 'MenuSelectedFcn', createCallbackFcn(app, @FileMenuSaveSelected, true));
+            app.FileMenuLabelCondition = uimenu(app.FileMenu, 'Text', 'Label condition',...
+                'MenuSelectedFcn', createCallbackFcn(app, @FileLabelConditionSelected, true));
             app.FileMenuExport = uimenu(app.FileMenu, 'Text', 'Export',...
                 'MenuSelectedFcn', createCallbackFcn(app, @FileMenuExportSelected, true),...
                 'Enable', 'off');
@@ -1621,6 +1640,41 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.DetrendSize = 0;
                 cancelOptionPressed(app, event);
                 OptionMenuSelected(app, event);
+            end
+        end
+        
+        % Rename the conditions
+        function FileLabelConditionSelected(app, event)
+            screenSize = get(0, 'ScreenSize');
+            labelFigure = figure('Units', 'pixels', 'Visible', 'on',...
+                'Position', [100 100 400 500],...
+                'Name', 'Relable condition', 'ToolBar', 'none', 'MenuBar', 'none',...
+                'NumberTitle', 'off');
+            hList = uicontrol('Style', 'listbox', 'Position', [20 80 200 400],...
+                'Min', 0, 'Max', 2, 'String', app.imgT.CellID);
+            hRadioButton = uibuttongroup('Title', 'Label to change',...
+                'Units', 'pixels', 'Position', [230 409 160 80],...
+                'FontSize', 11);
+            hRadioCond = uicontrol(hRadioButton, 'Style', 'radiobutton',...
+                'String', 'Condition', 'Position', [10 30 110 30]);
+            hRadioRec = uicontrol(hRadioButton, 'Style', 'radiobutton',...
+                'String', 'Recording', 'Position', [10 5 110 30]);
+            hText = uicontrol('Style', 'edit', 'Position', [240 360 140 20],...
+                'String', '(Condition)');
+            hButton = uicontrol('Style', 'pushbutton', 'String', 'Confirm',...
+                'Position', [240 335 140 20],...
+                'Callback', createCallbackFcn(app, @labelConfirmPressed, true));
+            function labelConfirmPressed(app, event)
+                % Get the index of the files to change
+                nameIdx = hList.Value;
+                newLabel = hText.String;
+                switch hRadioButton.SelectedObject.String
+                    case 'Condition'
+                        app.imgT.Condition(nameIdx) = {newLabel};
+                    case 'Recording'
+                        app.imgT.RecID(nameIdx) = {newLabel};
+                end
+                hList.String = app.imgT.CellID;
             end
         end
     end
