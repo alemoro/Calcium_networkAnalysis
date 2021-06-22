@@ -603,7 +603,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 decayTau = nan(2, nSpikes);
                 for s = 1:nSpikes
                     % Might be useful to refine to spike location
-                    [newMax, newSpikeLoc] = max(traceData(t,spikeLocs(s)-minD:spikeLocs(s)+10));
+                    [newMax, newSpikeLoc] = max(traceData(t,spikeLocs(s)-minD:min(length(traceData),spikeLocs(s)+10)));
                     if newMax > traceData(t,spikeLocs(s))
                         spikeLocs(s) = newSpikeLoc + spikeLocs(s) - minD - 1;
                     end
