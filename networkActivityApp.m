@@ -869,20 +869,28 @@ classdef networkActivityApp < matlab.apps.AppBase
             uniCond = categories(conditions);
             nCond = numel(uniCond);
             allData = cell2mat(app.imgT.TimeInterSpikeInterval);
-            figure; hAx = axes; hold on
+            figure; hAx1 = subplot(2,1,1); hold on
+            hAx2 = subplot(2,1,2); hold on
             cmap = lines;
             for c = 1:nCond
                 tempData = allData(conditions == uniCond(c), :);
                 tempMean = nanmean(tempData);
                 tempSEM = nanstd(tempData) / sqrt(sum(conditions == uniCond(c)));
                 semY = [(tempMean-tempSEM); (tempMean-tempSEM); (tempMean+tempSEM); (tempMean+tempSEM)];
-                patch(hAx, semX, semY, cmap(c,:), 'EdgeColor', 'none', 'FaceAlpha', .3);
-                hLeg(c) = stairs(timeISI / Fs, [tempMean, tempMean(end)], 'Color', cmap(c,:));
+                patch(hAx1, semX, semY, cmap(c,:), 'EdgeColor', 'none', 'FaceAlpha', .3);
+                hLeg1(c) = stairs(hAx1, timeISI / Fs, [tempMean, tempMean(end)], 'Color', cmap(c,:));
+                tempMean = nanmean(1 ./ tempData);
+                tempSEM = nanstd(1 ./ tempData) / sqrt(sum(conditions == uniCond(c)));
+                semY = [(tempMean-tempSEM); (tempMean-tempSEM); (tempMean+tempSEM); (tempMean+tempSEM)];
+                patch(hAx2, semX, semY, cmap(c,:), 'EdgeColor', 'none', 'FaceAlpha', .3);
+                stairs(hAx2, timeISI / Fs, [tempMean, tempMean(end)], 'Color', cmap(c,:));
             end
-            set(gca, 'TickDir', 'out')
-            ylabel('Inter spike interval (s)')
-            xlabel('Time (s)')
-            legend(hLeg, uniCond, 'Box', 'off', 'Location', 'best')
+            set(hAx1, 'TickDir', 'out')
+            set(hAx2, 'TickDir', 'out')
+            ylabel(hAx1, 'Inter spike interval (s)')
+            ylabel(hAx2, 'Frequency (Hz)')
+            xlabel(hAx2, 'Time (s)')
+            legend(hAx1, hLeg1, uniCond, 'Box', 'off', 'Location', 'best')
         end
     end
     
