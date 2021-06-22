@@ -22,6 +22,8 @@ classdef networkActivityApp < matlab.apps.AppBase
         AnalysisMenuReCalculate
         PlotMenu
         PlotMenuRaster
+        PlotMenuOverview
+        PlotMenuTimeFrequency
         OptionMenu
         OptionMenuSettings
         OptionMenuDebug
@@ -469,6 +471,22 @@ classdef networkActivityApp < matlab.apps.AppBase
             nFrames = size(tempData,2);
             tempLoc = cellfun(@(x) round(x * Fs), app.imgT.SpikeLocations{imgIdx}, 'UniformOutput', false);
             % Calculate the rise and decay time
+            % First check if there is detection closer than the minimum distance
+            diffLoc = cellfun(@diff, tempLoc, 'UniformOutput', false);
+            anyLoc = cellfun(@(x) any(x <= app.options.PeakMinDistance), diffLoc);
+            if any(anyLoc)
+                hasSmall = find(anyLoc);
+                for hS = hasSmall'
+                    keepIdx = true(1,numel(app.imgT.SpikeIntensities{imgIdx}{hS}));
+                    smallIdx = find(diffLoc{hS} <= app.options.PeakMinDistance);
+                    [~, minIdx] = min(app.imgT.SpikeIntensities{imgIdx}{hS}(smallIdx:smallIdx+1));
+                    keepIdx(minIdx+smallIdx-1) = ~keepIdx(minIdx+smallIdx-1);
+                    app.imgT.SpikeLocations{imgIdx}{hS} = app.imgT.SpikeLocations{imgIdx}{hS}(keepIdx);
+                    app.imgT.SpikeIntensities{imgIdx}{hS} = app.imgT.SpikeIntensities{imgIdx}{hS}(keepIdx);
+                    app.imgT.SpikeWidths{imgIdx}{hS} = app.imgT.SpikeWidths{imgIdx}{hS}(keepIdx);
+                end
+                tempLoc = cellfun(@(x) round(x * Fs), app.imgT.SpikeLocations{imgIdx}, 'UniformOutput', false);
+            end
             [spikeStart, spikeEnd, spikePeak, riseTime, decayTau, spikeLoc] = riseAndDecay(app, tempData, tempLoc, Fs);
             tempLoc = spikeLoc';
             %app.imgT.SpikeLocations{imgIdx} = cellfun(@(x) x / Fs, spikeLoc, 'UniformOutput', false);
@@ -528,6 +546,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             nSample = 5;
             timeISI = 0:nFrames/nSample:nFrames;
             tempMeanISI = nan(size(tempLoc,1),nSample);
+            tempMeanFreq = nan(size(tempLoc,1),nSample);
             for s = 1:size(tempLoc,1)
                 if ~isempty(tempLoc{s})
                     tempISI = [tempLoc{s}(1) / Fs, interSpikeInterval{s}];
@@ -838,6 +857,33 @@ classdef networkActivityApp < matlab.apps.AppBase
             rAx.Title.String = regexprep(app.curStak, '_', ' ');
         end
    
+        % Plot for ISI over tiome
+        function PlotTimeFrequencySelected(app, event)
+            % get the data
+            Fs = app.imgT.ImgProperties(1,4);
+            nFrames = size(app.imgT.DetrendData{1},2);
+            nSample = 5;
+            timeISI = 0:nFrames/nSample:nFrames;
+            semX = [timeISI(1:end-1);timeISI(2:end);timeISI(2:end);timeISI(1:end-1)] / Fs;
+            conditions = categorical(app.imgT.Condition);
+            uniCond = categories(conditions);
+            nCond = numel(uniCond);
+            allData = cell2mat(app.imgT.TimeInterSpikeInterval);
+            figure; hAx = axes; hold on
+            cmap = lines;
+            for c = 1:nCond
+                tempData = allData(conditions == uniCond(c), :);
+                tempMean = nanmean(tempData);
+                tempSEM = nanstd(tempData) / sqrt(sum(conditions == uniCond(c)));
+                semY = [(tempMean-tempSEM); (tempMean-tempSEM); (tempMean+tempSEM); (tempMean+tempSEM)];
+                patch(hAx, semX, semY, cmap(c,:), 'EdgeColor', 'none', 'FaceAlpha', .3);
+                hLeg(c) = stairs(timeISI / Fs, [tempMean, tempMean(end)], 'Color', cmap(c,:));
+            end
+            set(gca, 'TickDir', 'out')
+            ylabel('Inter spike interval (s)')
+            xlabel('Time (s)')
+            legend(hLeg, uniCond, 'Box', 'off', 'Location', 'best')
+        end
     end
     
     % Callbacks methods
@@ -1131,8 +1177,15 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             currRois = cell2mat(app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'});
             app.dicT{contains(app.dicT.CellID, app.curDIC), 'RoiSet'} = {currRois(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'RawIntensity'} = {app.imgT.RawIntensity{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'FF0Intensity'} = {app.imgT.FF0Intensity{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'DetrendData'} = {app.imgT.DetrendData{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeLocations'} = {app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeIntensities'} = {app.imgT.SpikeIntensities{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeWidths'} = {app.imgT.SpikeWidths{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeRaster'} = {app.imgT.SpikeRaster{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
             updateDIC(app, true)
-            getIntensityvalues(app)
+            %getIntensityvalues(app)
             updatePlot(app)
         end
         
@@ -1444,15 +1497,6 @@ classdef networkActivityApp < matlab.apps.AppBase
                 case 'Smooth'
                     detectTrace = smoothTrace;
             end
-            switch app.options.PeakMinHeight
-                case 'MAD'
-                    spikeThr = median(detectTrace) + mad(detectTrace) * app.options.SigmaThr;
-                case 'Normalized MAD'
-                    spikeThr = median(detectTrace) + mad(detectTrace) * app.options.SigmaThr * (-1 / (sqrt(2) * erfcinv(3/2)));
-                case 'Rolling StDev'
-                    warndlg('Not implemented yet! Used MAD instead', 'Failed detection')
-                    spikeThr = median(detectTrace) + mad(detectTrace) * app.options.SigmaThr;
-            end
             tS = 1;
             while true
                 axes(app.AxesPlot);
@@ -1474,7 +1518,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 pointF = round(round(pointX) * Fs);
                 [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
                     'SortStr', 'descend');
-                tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)) / Fs;
+                tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
                 tempSpikeData(2,tS) = tempInts(1);
                 tempSpikeData(3,tS) = tempWidths(1);
                 plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
@@ -1583,6 +1627,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.PlotMenu = uimenu(app.Figure, 'Text', 'Plot', 'Enable', 'off');
             app.PlotMenuRaster = uimenu(app.PlotMenu, 'Text', 'Raster Plot',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
+            app.PlotMenuOverview = uimenu(app.PlotMenu, 'Text', 'Plot overview',...
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotOverviewSelected, true), 'Enable', 'off');
+            app.PlotMenuTimeFrequency = uimenu(app.PlotMenu, 'Text', 'ISI over time',...
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotTimeFrequencySelected, true), 'Enable', 'on');
             app.OptionMenu = uimenu(app.Figure, 'Text', 'Options');
             app.OptionMenuSettings = uimenu(app.OptionMenu, 'Text', 'Settings',...
                 'MenuSelectedFcn', createCallbackFcn(app, @OptionMenuSelected, true), 'Enable', 'on');
@@ -1816,7 +1864,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Name', 'Relable condition', 'ToolBar', 'none', 'MenuBar', 'none',...
                 'NumberTitle', 'off');
             hList = uicontrol('Style', 'listbox', 'Position', [20 80 200 400],...
-                'Min', 0, 'Max', 2, 'String', app.imgT.CellID);
+                'Min', 0, 'Max', 2, 'String', cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false));
             hRadioButton = uibuttongroup('Title', 'Label to change',...
                 'Units', 'pixels', 'Position', [230 409 160 80],...
                 'FontSize', 11);
@@ -1839,7 +1887,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     case 'Recording'
                         app.imgT.RecID(nameIdx) = {newLabel};
                 end
-                hList.String = app.imgT.CellID;
+                hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false);
             end
         end
     end
