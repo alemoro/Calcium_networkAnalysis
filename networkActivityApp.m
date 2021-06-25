@@ -676,13 +676,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 spikeDecay{t} = decayTau;
             end
         end
-        
-        % Calculate the interburst interval over time
-        function [tempOut] = timeFrequency(app, spikeData, traceISI)
-            % prepare the data
-            tempOut = traceISI;
-        end
-        
+            
         % Update the plot
         function updatePlot(app)
             % First get the data
@@ -873,12 +867,14 @@ classdef networkActivityApp < matlab.apps.AppBase
             hAx2 = subplot(2,1,2); hold on
             cmap = lines;
             for c = 1:nCond
+                % Plot the ISI
                 tempData = allData(conditions == uniCond(c), :);
                 tempMean = nanmean(tempData);
                 tempSEM = nanstd(tempData) / sqrt(sum(conditions == uniCond(c)));
                 semY = [(tempMean-tempSEM); (tempMean-tempSEM); (tempMean+tempSEM); (tempMean+tempSEM)];
                 patch(hAx1, semX, semY, cmap(c,:), 'EdgeColor', 'none', 'FaceAlpha', .3);
                 hLeg1(c) = stairs(hAx1, timeISI / Fs, [tempMean, tempMean(end)], 'Color', cmap(c,:));
+                % From the ISI calculate an average frequency and plot it
                 tempMean = nanmean(1 ./ tempData);
                 tempSEM = nanstd(1 ./ tempData) / sqrt(sum(conditions == uniCond(c)));
                 semY = [(tempMean-tempSEM); (tempMean-tempSEM); (tempMean+tempSEM); (tempMean+tempSEM)];
@@ -892,6 +888,95 @@ classdef networkActivityApp < matlab.apps.AppBase
             xlabel(hAx2, 'Time (s)')
             legend(hAx1, hLeg1, uniCond, 'Box', 'off', 'Location', 'best')
         end
+        
+        % Plot a general overview of the data and the coefficient of variation
+        function PlotOverviewSelected(app, event)
+            % Create the labels
+            yLabels = {'Spike frequency per cell (Hz)', 'Spike rise time (s)', 'Spike Intensity (a.u.)', 'Spike FWHM (s)', 'Spike decay \tau (s)', 'Interspike interval (s)', 'Network frequency (Hz)', 'Spike participation (%)';...
+                'Spike frequency CoV', 'Spike rise time CoV', 'Spike Intensity CoV', 'Spike FWHM CoV', 'Spike decay \tau CoV', 'Interspike interval CoV', 'Network frequency CoV', 'Spike participation CoV'};
+            yValues = {'MedianFreq', 'MedianRiseTime', 'MedianInt', 'NewMedianFWHM', 'MedianDecayTau', 'MedianISI', 'NetworkFrequencyGauss', 'PeakParticipation'};
+            nPlot = 8;
+            figure
+            cmap = lines;
+            % Get the broups
+            conditions = categorical(app.imgT.Condition);
+            uniCond = categories(conditions);
+            nCond = numel(uniCond);
+            % Get the replicas
+            batchList = app.imgT.Week;
+            weeks = unique(batchList);
+            nWeeks = numel(weeks);
+            for p = 1:nPlot
+                % Create the main plot
+                subplot(2,nPlot,p); hold on
+                yData = app.imgT{:,yValues(p)};
+                QCD = nan(nCond, nWeeks);
+                for c = 1:nCond
+                    condFltr = conditions == uniCond(c);
+                    tempY = sort(yData(condFltr));
+                    quantY = quantile(tempY, [0.25 0.5 0.75]);
+                    minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
+                    lowW = find(tempY>=minW,1,'first');
+                    minW = tempY(lowW);
+                    maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
+                    highW = find(tempY<=maxW,1,'last');
+                    maxW = tempY(highW);
+                    % Boxplot
+                    patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
+                    plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
+                    plot([c c], [minW quantY(1)], 'color', cmap(c,:));
+                    plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
+                    % Add the data points
+                    x = linspace(c - 0.15, c + 0.15, nWeeks);
+                    for w = 1:nWeeks
+                        weekFltr = batchList == weeks(w);
+                        if sum(weekFltr & condFltr) > 0
+                            plot(x(w),yData(weekFltr & condFltr), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
+                            % calculate the quartile coefficient of dispersion
+                            QCD(c,w) = (quantile(yData(weekFltr & condFltr), 0.75) - quantile(yData(weekFltr & condFltr), 0.25)) / (quantile(yData(weekFltr & condFltr), 0.75) + quantile(yData(weekFltr & condFltr), 0.25)) * 100;
+                        end
+                    end
+                end
+                % Add the label
+                set(gca, 'TickDir', 'out');
+                xlim([.5 nCond+.5])
+                set(gca, 'XTick', 1:nCond);
+                set(gca, 'XTickLabel', uniCond);
+                ylabel(yLabels(1,p))
+                % Add the coefficent of variation (or better quartile coefficient of dispersion) calculated per week
+                subplot(2, nPlot, p+nPlot); hold on
+                for c = 1:nCond
+                    tempY = sort(QCD(c,:));
+                    quantY = quantile(tempY, [0.25 0.5 0.75]);
+                    minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
+                    lowW = find(tempY>=minW,1,'first');
+                    minW = tempY(lowW);
+                    maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
+                    highW = find(tempY<=maxW,1,'last');
+                    maxW = tempY(highW);
+                    % Boxplot
+                    patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
+                    plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
+                    plot([c c], [minW quantY(1)], 'color', cmap(c,:));
+                    plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
+                    % Add the data points
+                    x = linspace(c - 0.15, c + 0.15, nWeeks);
+                    for w = 1:nWeeks
+                        weekFltr = batchList == weeks(w);
+                        if sum(weekFltr & condFltr) > 0
+                            plot(x(w),QCD(c,w), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
+                        end
+                    end
+                end
+                % Add the label
+                set(gca, 'TickDir', 'out');
+                xlim([.5 nCond+.5])
+                set(gca, 'XTick', 1:nCond);
+                set(gca, 'XTickLabel', uniCond);
+                ylabel(yLabels(2,p))
+            end
+        end
+        
     end
     
     % Callbacks methods
@@ -1636,7 +1721,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.PlotMenuRaster = uimenu(app.PlotMenu, 'Text', 'Raster Plot',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
             app.PlotMenuOverview = uimenu(app.PlotMenu, 'Text', 'Plot overview',...
-                'MenuSelectedFcn', createCallbackFcn(app, @PlotOverviewSelected, true), 'Enable', 'off');
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotOverviewSelected, true), 'Enable', 'on');
             app.PlotMenuTimeFrequency = uimenu(app.PlotMenu, 'Text', 'ISI over time',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotTimeFrequencySelected, true), 'Enable', 'on');
             app.OptionMenu = uimenu(app.Figure, 'Text', 'Options');
