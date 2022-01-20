@@ -127,6 +127,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.bcDIC.Visible = 'on';
             % Check if DIC is already present
             if bTable
+                if isempty(app.curDIC)
+                    app.curDIC = app.dicT.CellID{1};
+                end
                 whatDIC = contains(app.dicT.CellID, app.curDIC);
             else
                 whatDIC = 0;
@@ -380,7 +383,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     case 'None'
                         tempDetrend{i,1} = tempData;
                     case 'Moving median'
-                        fitData = movmedian(tempData, app.options.DetrendSize, 2);
+                        fitData = movmedian(tempData, [0.2*app.options.DetrendSize 0.8*app.options.DetrendSize], 2);
                         tempDetrend{i,1} = tempData - fitData;
                     case 'Polynomial'
                         tempDetrend{i,1} = detrend(tempData', app.options.DetrendSize)';
@@ -416,13 +419,21 @@ classdef networkActivityApp < matlab.apps.AppBase
             warning('off', 'all');
             % Gather the image data
             detrendData = cell2mat(app.imgT{imgIdx, 'DetrendData'});
+            nanFrames = find(isnan(detrendData(1,:)), 1);
+            if ~isempty(nanFrames)
+                detrendData = detrendData(:,1:nanFrames-1);
+            end
             [nTraces, nFrames] = size(detrendData);
             Fs = app.imgT.ImgProperties(imgIdx,4);
             % denoise the data using wavelet signal denoising with standard parameters
             if any(isnan(detrendData))
                 detrendData(isnan(detrendData)) = 0;
             end
-            smoothData = wdenoise(detrendData', 'DenoisingMethod', 'BlockJS')'; % wdenoise only works on colums so inverted twice
+            try
+                smoothData = wdenoise(detrendData', 'DenoisingMethod', 'BlockJS')'; % wdenoise only works on colums so inverted twice
+            catch ME
+                rethrow(ME)
+            end
             spikeInts = cell(nTraces, 1);
             spikeLocs = cell(nTraces, 1);
             spikeWidths = cell(nTraces, 1);
@@ -434,7 +445,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             % for parfor settings
             switch app.options.DetectTrace
                 case 'Raw'
-                    gradientTrace = smoothData;
+                    gradientTrace = detrendData;
                 case 'Gradient'
                     gradientTrace = gradient(smoothData);
                 case 'Smooth'
@@ -600,12 +611,15 @@ classdef networkActivityApp < matlab.apps.AppBase
                 indexLB = nan(2, nSpikes);
                 indexRB = nan(2, nSpikes);
                 halfMax = nan(1, nSpikes);
-                decayTau = nan(2, nSpikes);
+                decayTauA = nan(1, nSpikes);
+                decayTauB = nan(1, nSpikes);
                 for s = 1:nSpikes
                     % Might be useful to refine to spike location
-                    [newMax, newSpikeLoc] = max(traceData(t,spikeLocs(s)-minD:min(length(traceData),spikeLocs(s)+10)));
+                    [newMax, newSpikeLoc] = max(traceData(t,max(1,spikeLocs(s)-minD):min(length(traceData),spikeLocs(s)+10)));
                     if newMax > traceData(t,spikeLocs(s))
-                        spikeLocs(s) = newSpikeLoc + spikeLocs(s) - minD - 1;
+                        if s < nSpikes && (newSpikeLoc + spikeLocs(s) - minD - 1) < (spikeLocs(s+1)-2)
+                            spikeLocs(s) = newSpikeLoc + spikeLocs(s) - minD - 1;
+                        end
                     end
                     % Left bound
                     if s == 1
@@ -647,7 +661,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     baseInt = (smoothData(indexLB(1,s)) + smoothData(indexRB(1,s))) / 2;
                     halfMax(s) = (baseInt + smoothData(spikeLocs(s))) / 2;
                     tempIdx = find(smoothData(indexLB(1,s):indexRB(1,s)) > halfMax(s), 1, 'first') - 2 + indexLB(1,s);
-                    if isempty(tempIdx)
+                    if isempty(tempIdx) || tempIdx == 0
                         tempIdx = 1;
                     end
                     indexLB(2,s) = tempIdx;
@@ -656,24 +670,29 @@ classdef networkActivityApp < matlab.apps.AppBase
                         tempIdx = length(smoothData);
                     end
                     indexRB(2,s) = tempIdx;
+                end
+                % Work with parallel for loop to calculate the decay fit
+                parfor s = 1:nSpikes
                     % Calculate the decay constant
+                    decayTime = (spikeLocs(s):indexRB(1,s)) / Fs;
+                    decayTrace = traceData(t, round(decayTime * Fs));
                     expFit = fittype( 'exp1' );
                     fitOpts = fitoptions( 'Method', 'NonlinearLeastSquares' );
                     fitOpts.Display = 'Off';
                     fitOpts.Normalize = 'On';
-                    decayTime = (spikeLocs(s):indexRB(1,s)) / Fs;
-                    decayTrace = traceData(t, round(decayTime * Fs));
-                    decayFit = fit(decayTime', decayTrace', expFit, fitOpts);
-                    % To get the fitted trace use: fitTrace = decayFit.a * exp(decayFit.b .* ((decayTime-mean(decayTime))/std(decayTime)));
-                    decayTau(1,s) = decayFit.a;
-                    decayTau(2,s) = -1*(decayFit.b)^-1;
+                    if numel(decayTrace) > 2
+                        decayFit = fit(decayTime', decayTrace', expFit, fitOpts);
+                        % To get the fitted trace use: fitTrace = decayFit.a * exp(decayFit.b .* ((decayTime-mean(decayTime))/std(decayTime)));
+                        decayTauA(1,s) = decayFit.a;
+                        decayTauB(1,s) = -1*(decayFit.b)^-1;
+                    end
                 end
                 spikeStart{t} = indexLB;
                 spikeLoc{t} = spikeLocs;
                 spikeEnd{t} = indexRB;
                 spikePeak{t} = halfMax;
                 spikeRise{t} = (spikeLocs - indexLB(1,:)) / Fs;
-                spikeDecay{t} = decayTau;
+                spikeDecay{t} = [decayTauA; decayTauB];
             end
         end
             
@@ -727,8 +746,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                     for s = 1:nSpike
                         spikeRiseTime = spikeStart(s):round(spikeLoc(s)*Fs)+1;
                         spikeDecayTime = round(spikeLoc(s)*Fs)+1:spikeEnd(s);
-                        plot(time(spikeRiseTime), tempData(cellN,spikeRiseTime), 'm');
-                        plot(time(spikeDecayTime), tempData(cellN,spikeDecayTime), 'g');
+                        plot(app.AxesPlot, time(spikeRiseTime), tempData(cellN,spikeRiseTime), 'm');
+                        plot(app.AxesPlot, time(spikeDecayTime), tempData(cellN,spikeDecayTime), 'g');
                     end
                 end
                 legend(app.AxesPlot, 'hide')
@@ -863,6 +882,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             uniCond = categories(conditions);
             nCond = numel(uniCond);
             allData = cell2mat(app.imgT.TimeInterSpikeInterval);
+%             allData(isnan(allData)) = 60;
             figure; hAx1 = subplot(2,1,1); hold on
             hAx2 = subplot(2,1,2); hold on
             cmap = lines;
@@ -897,7 +917,13 @@ classdef networkActivityApp < matlab.apps.AppBase
             yValues = {'MedianFreq', 'MedianRiseTime', 'MedianInt', 'NewMedianFWHM', 'MedianDecayTau', 'MedianISI', 'NetworkFrequencyGauss', 'PeakParticipation'};
             nPlot = 8;
             figure
-            cmap = lines;
+            %cmap = lines;
+            cmap1 = {'#000000', '#42AD2C', '#AD4492', '#BB81AD'};
+            %cmap1 = {'#000000', '#636363', '#42AD2C', '#75BB67', '#AD4492', '#BB81AD'};
+            cmap = nan(length(cmap1), 3);
+            for c = 1:length(cmap1)
+                cmap(c,:) = sscanf(cmap1{c}(2:end),'%2x%2x%2x',[1 3])/255;
+            end
             % Get the broups
             conditions = categorical(app.imgT.Condition);
             uniCond = categories(conditions);
@@ -1019,7 +1045,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                     expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{2}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
                 else
-                    expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{3}, x{4}), nameParts, 'UniformOutput', false);
+%                     expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{3}, x{4}), nameParts, 'UniformOutput', false);
+                    expIDs = cellfun(@(x) sprintf('%s_%s', x{1}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
                 end
                 tempDicImages = cell(numel(dicFltr), 2);
@@ -1065,7 +1092,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                         tempT{i+1,4} = imgIDs{i}{3};
                         tempT{i+1,5} = imgIDs{i}{4};
                         tempT{i+1,6} = imgIDs{i}{2};
-                        tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{3} '_' imgIDs{i}{4}]; % use to link the DIC to the movies
+%                         tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{3} '_' imgIDs{i}{4}]; % use to link the DIC to the movies
+                        tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{3}]; % use to link the DIC to the movies
                     end
                     % get the imaging period (T) and frequency (Fs) from the file
                     imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
@@ -1122,11 +1150,13 @@ classdef networkActivityApp < matlab.apps.AppBase
                         networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif'});
                         for ii = 1:size(networkFiles.dicT,1)
                             [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
-                            networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+                            %networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+                            networkFiles.dicT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
                         end
                         for ii = 1:size(networkFiles.imgT,1)
                             [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
-                            networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+                            %networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+                            networkFiles.imgT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
                         end
                         %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
                         %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
@@ -1273,10 +1303,12 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT{contains(app.imgT.CellID, app.curStak), 'RawIntensity'} = {app.imgT.RawIntensity{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
             app.imgT{contains(app.imgT.CellID, app.curStak), 'FF0Intensity'} = {app.imgT.FF0Intensity{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
             app.imgT{contains(app.imgT.CellID, app.curStak), 'DetrendData'} = {app.imgT.DetrendData{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
-            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeLocations'} = {app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
-            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeIntensities'} = {app.imgT.SpikeIntensities{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
-            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeWidths'} = {app.imgT.SpikeWidths{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
-            app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeRaster'} = {app.imgT.SpikeRaster{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            if ~isempty(app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeLocations'})
+                app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeLocations'} = {app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+                app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeIntensities'} = {app.imgT.SpikeIntensities{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+                app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeWidths'} = {app.imgT.SpikeWidths{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+                app.imgT{contains(app.imgT.CellID, app.curStak), 'SpikeRaster'} = {app.imgT.SpikeRaster{contains(app.imgT.CellID, app.curStak)}(keepRoi,:)};
+            end
             updateDIC(app, true)
             %getIntensityvalues(app)
             updatePlot(app)
@@ -1312,7 +1344,11 @@ classdef networkActivityApp < matlab.apps.AppBase
             hWait = waitbar(0, 'Collecting spike data');
             timeEst = 10 * nImg;
             for i = 1:nImg
-                waitbar(i/nImg, hWait, sprintf('Quantifying %s (~ %0.2f s)', regexprep(app.imgT.CellID{i}, '_', ' '), timeEst));
+                if timeEst > 60
+                    waitbar(i/nImg, hWait, sprintf('Quantifying %s (~ %0.2f min)', regexprep(app.imgT.CellID{i}, '_', ' '), timeEst/60));
+                else    
+                    waitbar(i/nImg, hWait, sprintf('Quantifying %s (~ %0.2f s)', regexprep(app.imgT.CellID{i}, '_', ' '), timeEst));
+                end
                 tic
                 quantifySpikes(app, imgFltr(i))
                 timeEst = mean([timeEst, round(toc * (nImg - i))]);
@@ -1634,7 +1670,8 @@ classdef networkActivityApp < matlab.apps.AppBase
         function keyPressed(app, event)
             switch event.Key
                 case "a" % Add new peaks
-                    TogglePeakAddPress(app, event)
+                    events.EventName='Action';
+                    TogglePeakAddPress(app, events)
                 case "s" % Select new DIC
                     DicMenuSelectSelected(app, event)
                 case "d" % delete all events
