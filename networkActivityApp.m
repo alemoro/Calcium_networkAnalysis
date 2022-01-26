@@ -554,6 +554,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             networkFreqGauss = sum(networkPeaks >= netThreshold) / totTime; % Use the maximum number of cells
             % Calculate the interspike intervals, and time-frequency
             interSpikeInterval = cellfun(@(x) diff(x) / Fs, tempLoc, 'UniformOutput', false);
+            qcd = @(x) (quantile(x, .75) - quantile(x, .25)) / (quantile(x, .75) + quantile(x, .25));
+            ISI_CoV = cellfun(qcd, interSpikeInterval);
             nSample = 5;
             timeISI = 0:nFrames/nSample:nFrames;
             tempMeanISI = nan(size(tempLoc,1),nSample);
@@ -566,25 +568,31 @@ classdef networkActivityApp < matlab.apps.AppBase
                     end
                 end
             end
+            % Calculate and keep track of subthreshold spikes (as for now defined as promininence < 0.2 a.u.)
+            subFltr = cellfun(@(x) x<=0.2, spikePeak, 'UniformOutput', false);
+            subRatio = cellfun(@(x) sum(x)/numel(x), subFltr);
             % Calculate if there are bursts
             
             % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
             app.imgT.Participation(imgIdx) = sum(any(~isnan(tempRast), 2)) / nCell * 100;
             app.imgT.CellFrequency{imgIdx} = tempFreq;
-            app.imgT.SynchronousLocations{imgIdx} = synLocs;
-            app.imgT.SynchronousPercentages{imgIdx} = synPC;
-            app.imgT.NetworkFrequency(imgIdx) = networkFreq;
+            app.imgT.SubthresholdFltr{imgIdx} = subFltr;
+            app.imgT.SubthresholdRatio{imgIdx} = subRatio;
+%             app.imgT.SynchronousLocations{imgIdx} = synLocs;
+%             app.imgT.SynchronousPercentages{imgIdx} = synPC;
+            app.imgT.NetworkFrequency(imgIdx) = networkFreqGauss;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
-            app.imgT.TimeInterSpikeInterval{imgIdx} = nanmean(tempMeanISI);
-            app.imgT.NetworkFrequencyGauss(imgIdx) = networkFreqGauss;
-            app.imgT.NetworkPeaksGauss{imgIdx} = networkPeaks;
-            app.imgT.NetworkLocsGauss{imgIdx} = networkLocs;
-            app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
+            app.imgT.InterSpikeIntervalCoV{imgIdx} = ISI_CoV;
+%             app.imgT.TimeInterSpikeInterval{imgIdx} = nanmean(tempMeanISI);
+%             app.imgT.NetworkFrequencyGauss(imgIdx) = networkFreqGauss;
+%             app.imgT.NetworkPeaksGauss{imgIdx} = networkPeaks;
+%             app.imgT.NetworkLocsGauss{imgIdx} = networkLocs;
+%             app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
             app.imgT.NetworkRaster{imgIdx} = networkRaster;
             app.imgT.SpikeStartAndEnd{imgIdx} = cellfun(@(x, y) [x;y], spikeStart, spikeEnd, 'UniformOutput', false);
-            app.imgT.NewDuration{imgIdx} = cellfun(@(x,y) (y(2,:) - x(2,:)) / Fs, spikeStart, spikeEnd, 'UniformOutput', false)';
-            app.imgT.NewSpikePeak{imgIdx} = spikePeak';
+            app.imgT.SpikeWidths{imgIdx} = cellfun(@(x,y) (y(2,:) - x(2,:)) / Fs, spikeStart, spikeEnd, 'UniformOutput', false)';
+            app.imgT.SpikeIntensities{imgIdx} = spikePeak';
             app.imgT.CellRiseTime{imgIdx} = riseTime';
             app.imgT.CellDecayCon{imgIdx} = cellfun(@(x) x(1,:), decayTau, 'UniformOutput', false)';
             app.imgT.CellDecayTau{imgIdx} = cellfun(@(x) x(2,:), decayTau, 'UniformOutput', false)';
@@ -1357,6 +1365,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Add the median per spike, consider that not all cells are quantified yet
             for isi = 1:size(app.imgT,1)
                 if ~isempty(app.imgT.SpikeIntensities{isi})
+                    % Need to add rise, decay, duration, intensity for
+                    % supra and subthreshold
                     app.imgT.MedianInt(isi) = nanmedian(cellfun(@nanmedian, app.imgT.SpikeIntensities{isi}));
                     app.imgT.MedianFWHM(isi) = nanmedian(cellfun(@nanmedian, app.imgT.SpikeWidths{isi}));
                     app.imgT.MedianISI(isi) = nanmedian(cellfun(@nanmedian, app.imgT.InterSpikeInterval{isi}));
@@ -1367,10 +1377,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.imgT.MedianRiseTime(isi) = nanmedian(cellfun(@nanmedian, app.imgT.CellRiseTime{isi}));
                     app.imgT.MeanDecayTau(isi) = nanmean(cellfun(@nanmean, app.imgT.CellDecayTau{isi}));
                     app.imgT.MedianDecayTau(isi) = nanmedian(cellfun(@nanmedian, app.imgT.CellDecayTau{isi}));
-                    app.imgT.NewMedianFWHM(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewDuration{isi}));
-                    app.imgT.NewMeanFWHM(isi) = nanmean(cellfun(@nanmean, app.imgT.NewDuration{isi}));
-                    app.imgT.NewMedianInt(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewSpikePeak{isi}));
-                    app.imgT.NewMeanInt(isi) = nanmean(cellfun(@nanmean, app.imgT.NewSpikePeak{isi}));
+%                     app.imgT.NewMedianFWHM(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewDuration{isi}));
+%                     app.imgT.NewMeanFWHM(isi) = nanmean(cellfun(@nanmean, app.imgT.NewDuration{isi}));
+%                     app.imgT.NewMedianInt(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewSpikePeak{isi}));
+%                     app.imgT.NewMeanInt(isi) = nanmean(cellfun(@nanmean, app.imgT.NewSpikePeak{isi}));
                 end
             end
             % For the Gaussian fit
@@ -1379,10 +1389,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.nCell = cellfun(@(x) size(x,1), app.imgT.RawIntensity);
             app.imgT.nCell = round(app.imgT.nCell .* app.imgT.Participation / 100);
             app.imgT.PeakParticipation = cellfun(@mean, app.imgT.NetworkPeaksGauss) ./ app.imgT.nCell * 100;
-            app.imgT.MedianNetworkFWHM = cellfun(@nanmedian, app.imgT.NetworkFWHMGauss);
-            app.imgT.MedianNetworkISI = cellfun(@(x) nanmedian(diff(x)), app.imgT.NetworkLocsGauss);
-            app.imgT.MeanNetworkFWHM = cellfun(@nanmean, app.imgT.NetworkFWHMGauss);
-            app.imgT.MeanNetworkISI = cellfun(@(x) nanmean(diff(x)), app.imgT.NetworkLocsGauss);
+%             app.imgT.MedianNetworkFWHM = cellfun(@nanmedian, app.imgT.NetworkFWHMGauss);
+%             app.imgT.MedianNetworkISI = cellfun(@(x) nanmedian(diff(x)), app.imgT.NetworkLocsGauss);
+%             app.imgT.MeanNetworkFWHM = cellfun(@nanmean, app.imgT.NetworkFWHMGauss);
+%             app.imgT.MeanNetworkISI = cellfun(@(x) nanmean(diff(x)), app.imgT.NetworkLocsGauss);
             app.PlotMenu.Enable = 'on';
         end
         
