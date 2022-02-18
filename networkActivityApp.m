@@ -1467,13 +1467,13 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.imgT.MedianISI(isi) = nanmedian(cellfun(@nanmedian, app.imgT.InterSpikeInterval{isi}));
                 end
             end
-            app.imgT.ISICoV = cellfun(@mean, app.imgT.InterSpikeIntervalCoV);
+            app.imgT.ISICoV = cellfun(@nanmean, app.imgT.InterSpikeIntervalCoV);
             % For the Gaussian fit
-            app.imgT.MeanFreq = cellfun(@mean, app.imgT.CellFrequency);
-            app.imgT.MedianFreq = cellfun(@median, app.imgT.CellFrequency);
+            app.imgT.MeanFreq = cellfun(@nanmean, app.imgT.CellFrequency);
+            app.imgT.MedianFreq = cellfun(@nanmedian, app.imgT.CellFrequency);
             app.imgT.nCell = cellfun(@(x) size(x,1), app.imgT.RawIntensity);
             app.imgT.nCell = round(app.imgT.nCell .* app.imgT.Participation / 100);
-            app.imgT.PeakParticipation = cellfun(@mean, app.imgT.NetworkPeaks) ./ app.imgT.nCell * 100;
+            app.imgT.PeakParticipation = cellfun(@nanmean, app.imgT.NetworkPeaks) ./ app.imgT.nCell * 100;
             app.PlotMenu.Enable = 'on';
         end
         
