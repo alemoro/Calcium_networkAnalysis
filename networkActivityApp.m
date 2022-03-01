@@ -1616,7 +1616,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             switch event.NewValue.String
                 case 'Single traces'
                     app.CellNumberMinor.Enable = 'on';
-                    app.CellNumberText.Enable = 'off';
+                    app.CellNumberText.Enable = 'on';
                     app.CellNumberPlus.Enable = 'on';
                     if ~isempty(app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)})
                         app.TogglePeakAdd.Enable = 'on';
@@ -1815,13 +1815,23 @@ classdef networkActivityApp < matlab.apps.AppBase
                         'SortStr', 'descend');
                     tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
                     % Check to see that the new spike is at least as far as the minimum distance
-                    if any((spikeData - tempSpikeData(1,tS)) < app.options.PeakMinDistance) || any((spikeData - tempSpikeData(1,tS)) >= app.options.PeakMinDistance)
-                        tempSpikeData(1,tS) = [];
+                    fltr1 = (tempSpikeData(1,tS)-app.options.PeakMinDistance) < spikeData(1,:);
+                    fltr2 = spikeData(1, fltr1) <= tempSpikeData(1,tS);
+                    if any(fltr2)
+                        hErr = errordlg('Spike already selected!');
+                        waitfor(hErr);
+                        tempSpikeData(:,tS) = [];
                     else
-                        tempSpikeData(2,tS) = tempInts(1);
-                        tempSpikeData(3,tS) = tempWidths(1);
-                        plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
-                        tS = tS + 1;
+                        if any(tempSpikeData(1,1:tS-1)==tempSpikeData(1,tS))
+                            hErr = errordlg('Spike already selected!');
+                            waitfor(hErr);
+                            tempSpikeData(:,tS) = [];
+                        else
+                            tempSpikeData(2,tS) = tempInts(1);
+                            tempSpikeData(3,tS) = tempWidths(1);
+                            plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
+                            tS = tS + 1;
+                        end
                     end
                 end
             end
