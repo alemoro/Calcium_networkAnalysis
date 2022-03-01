@@ -172,6 +172,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.cellsMask = [];
             end
             populateImageList(app)
+            app.AxesDIC.Toolbar.Visible = 'off';
         end
         
         function bcDICpressed(app, event)
@@ -283,7 +284,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             % Add the mask to the movie
             copyobj(app.patchMask, app.AxesStack)
-            
+            hPatch = findobj(app.AxesStack, 'Type', 'Patch');
+            for p = 1:length(hPatch)
+                hPatch(p).FaceColor = 'none';
+            end
         end
         
         % Function to manually evaluate the drift between images
@@ -794,6 +798,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 hLeg = get(app.AxesPlot, 'Legend');
                 hLeg.String = {hLeg.String{1}, hLeg.String{2}};
             end
+            app.AxesPlot.Toolbar.Visible = 'on';
         end
         
         % Brightness and contrast (similar to ImageJ)
@@ -935,7 +940,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             weeks = unique(batchList);
             nWeeks = numel(weeks);
             % Ask wich condition is the control
-            if ~isfield(app.options.ConditionOrder)
+            if ~isfield(app.options, 'ConditionOrder')
                 uniCond = unique(app.imgT.Condition);
                 promptCond = 'Enter space-separated number for conditions:/n';
                 for c=1:numel(uniCond)
@@ -946,6 +951,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             [contIdx, ~] = listdlg('ListString', uniCond, 'PromptString', 'Select control condition', 'SelectionMode', 'single');
             contID = uniCond{contIdx};
+            myCondition = reordercats(myCondition, str2num(app.options.ConditionOrder{1}));
             
             %%% CONDITIONAL FINGERPRINT%%%
             % Select the variables and create a list of labels
@@ -1021,8 +1027,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             CIFcn = @(x,p) nanstd(x)/sqrt(sum(~isnan(x))) * tinv(abs([0,1]-(1-p/100)/2),sum(~isnan(x))-1) + nanmean(x);
             for r = 1:nRec
                 recT = app.imgT(app.imgT.RecID == recID(r), :);
+                recT.Condition = myCondition(app.imgT.RecID == recID(r));
                 recT.Condition = removecats(recT.Condition);
-                uniCond = categories(app.imgT.Condition);
+                uniCond = categories(recT.Condition);
                 nCond = numel(uniCond);
                 figure('Name', sprintf('Overview of recording: %s', recID{r}))
                 cmap = lines;
@@ -1346,18 +1353,38 @@ classdef networkActivityApp < matlab.apps.AppBase
                     writetable(imgT, fullfile(filePath, fileName));
                 case 'Traces'
                     [fileName, filePath] = uiputfile('*.xlsx', 'Export network traces');
-                    for s = 1:size(app.imgT, 1)
-                        writetable(app.imgT.RawIntensity{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', app.imgT.CellID{s});
-                        writetable(app.imgT.FF0Intensity{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                    hWait = waitbar(0, 'Exporting data');
+                    nSheet = size(app.imgT, 1);
+                    allRaw = app.imgT.RawIntensity;
+                    allFF0 = app.imgT.FF0Intensity;
+                    allCellID = app.imgT.CellID;
+                    %timeEst = 1;
+                    for s = 1:nSheet
+                        tic;
+                        waitbar(s/nSheet, hWait, sprintf('Exporting data (~%.2f s)', timeEst*(nSheet-s)));
+                        writematrix(allRaw{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', allCellID{s});
+                        writematrix(allFF0{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', allCellID{s});
+                        timeEst = toc;
                     end
+                    close(hWait)
                 otherwise
                     [fileName, filePath] = uiputfile('*.csv', 'Export network data');
                     writetable(imgT, fullfile(filePath, fileName));
                     fileName = regexprep(fileName, 'csv', 'xlsx');
-                    for s = 1:size(app.imgT, 1)
-                        writetable(app.imgT.RawIntensity{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', app.imgT.CellID{s});
-                        writetable(app.imgT.FF0Intensity{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                    hWait = waitbar(0, 'Exporting data');
+                    nSheet = size(app.imgT, 1);
+                    allRaw = app.imgT.RawIntensity;
+                    allFF0 = app.imgT.FF0Intensity;
+                    allCellID = app.imgT.CellID;
+                    %timeEst = 1;
+                    for s = 1:nSheet
+                        tic;
+                        waitbar(s/nSheet, hWait, sprintf('Exporting data (~%.2f s)', timeEst*(nSheet-s)));
+                        writematrix(allRaw{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', allCellID{s});
+                        writematrix(allFF0{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', allCellID{s});
+                        timeEst = toc;
                     end
+                    close(hWait)
             end
             
             
@@ -1913,7 +1940,6 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Create the axes to store the images
             app.AxesDIC = axes('Units', 'pixels', 'Position', [70 410 400 400],...
                 'Visible', 'off');
-            app.AxesDIC.Toolbar.Visible = 'off';
             app.AxesDIC.Title.String = 'DIC Image';
             app.bcDIC = uicontrol(app.Figure, 'Style', 'pushbutton', 'Units', 'pixels',...
                 'Position', [70 810 80 20], 'String', 'Adjust B&C',...
@@ -1936,8 +1962,6 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.AxesPlot.YLabel.String = '\DeltaF/F_0';
             app.AxesPlot.XLabel.String = 'Time (s)';
             app.AxesPlot.TickDir = 'out';
-            app.AxesPlot.Toolbar.Visible = 'off';
-            app.AxesPlot.Interaction = [panInteraction zoomInteraction];
             % Create the components to interact with the images
             app.ListImagesLabel = uicontrol(app.Figure, 'Style', 'text',...
                 'String', 'Image Files', 'Units', 'pixels',...
@@ -2165,11 +2189,12 @@ classdef networkActivityApp < matlab.apps.AppBase
                     case 'Recording'
                         app.imgT.RecID(nameIdx) = {newLabel};
                 end
-                hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false);
+                hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, string(app.imgT.Condition), 'UniformOutput', false);
             end
+            waitfor(labelFigure);
             % ask the user to order the conditions
-            uniCond = unique(app.imgT.Condition);
-            promptCond = 'Enter space-separated number for conditions:/n';
+            uniCond = string(unique(app.imgT.Condition));
+            promptCond = 'Enter space-separated number for conditions: ';
             for c=1:numel(uniCond)
                 promptCond = sprintf('%s, %s', promptCond, uniCond{c});
             end
