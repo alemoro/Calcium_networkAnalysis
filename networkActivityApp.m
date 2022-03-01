@@ -283,6 +283,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             % Add the mask to the movie
             copyobj(app.patchMask, app.AxesStack)
+            
         end
         
         % Function to manually evaluate the drift between images
@@ -922,8 +923,8 @@ classdef networkActivityApp < matlab.apps.AppBase
         % Plot a general overview of the data and the coefficient of variation
         function PlotOverviewSelected(app, event)
             % Get the conditions
-            app.imgT.Condition = categorical(app.imgT.Condition);
-            uniCond = categories(app.imgT.Condition);
+            myCondition = categorical(app.imgT.Condition);
+            uniCond = categories(myCondition);
             nCond = numel(uniCond);
             % Check if there are multiple recordings per FOV
             app.imgT.RecID = categorical(app.imgT.RecID);
@@ -934,6 +935,15 @@ classdef networkActivityApp < matlab.apps.AppBase
             weeks = unique(batchList);
             nWeeks = numel(weeks);
             % Ask wich condition is the control
+            if ~isfield(app.options.ConditionOrder)
+                uniCond = unique(app.imgT.Condition);
+                promptCond = 'Enter space-separated number for conditions:/n';
+                for c=1:numel(uniCond)
+                    promptCond = sprintf('%s, %s', promptCond, uniCond{c});
+                end
+                condOrd = inputdlg(promptCond, 'Order conditions');
+                app.options.ConditionOrder = condOrd;
+            end
             [contIdx, ~] = listdlg('ListString', uniCond, 'PromptString', 'Select control condition', 'SelectionMode', 'single');
             contID = uniCond{contIdx};
             
@@ -948,6 +958,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             gr=1;
             for r = 1:nRec
                 recT = app.imgT(app.imgT.RecID == recID(r), :);
+                recT.Condition = myCondition(app.imgT.RecID == recID(r));
                 recT.Condition = removecats(recT.Condition);
                 conds = unique(recT.Condition);
                 nCond = numel(conds);
@@ -1290,6 +1301,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                         app.RadioSingleTrace.Enable = 'on';
                         app.RadioAllMean.Enable = 'on';
                         app.PlotMenu.Enable = 'on';
+                        app.CellNumberText.Enable = 'on';
+                        app.FileMenuExport.Enable = 'on';
                         app.curDIC = app.dicT.CellID{1};
                         if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
                             detrendData(app)
@@ -1321,12 +1334,32 @@ classdef networkActivityApp < matlab.apps.AppBase
         end
         
         function FileMenuExportSelected(app, event)
-            [fileName, filePath] = uiputfile('*.mat', 'Save network data');
-            savePath = fullfile(filePath, fileName);
-            dicT = app.dicT;
+            % Ask what needs to be saved
+            whatExport = questdlg('What would you like to export?', 'Export as csv', 'Analysis', 'Traces', 'Both', 'Analysis');
             imgT = app.imgT;
-            imgStore = app.imgDatastore;
-            fullT = app.fullT;
+            imgT.ImgProperties = imgT.ImgProperties(:,4);
+            imgT.Properties.VariableNames{8} = 'Fs';
+            imgT = imgT(:, [2:8 17 21 31:53]);
+            switch whatExport
+                case 'Analysis'
+                    [fileName, filePath] = uiputfile('*.csv', 'Export network data');
+                    writetable(imgT, fullfile(filePath, fileName));
+                case 'Traces'
+                    [fileName, filePath] = uiputfile('*.xlsx', 'Export network traces');
+                    for s = 1:size(app.imgT, 1)
+                        writetable(app.imgT.RawIntensity{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                        writetable(app.imgT.FF0Intensity{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                    end
+                otherwise
+                    [fileName, filePath] = uiputfile('*.csv', 'Export network data');
+                    writetable(imgT, fullfile(filePath, fileName));
+                    fileName = regexprep(fileName, 'csv', 'xlsx');
+                    for s = 1:size(app.imgT, 1)
+                        writetable(app.imgT.RawIntensity{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                        writetable(app.imgT.FF0Intensity{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', app.imgT.CellID{s});
+                    end
+            end
+            
             
         end
         
@@ -1423,6 +1456,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.TogglePeakAdd.Enable = 'on';
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
+            app.CellNumberText.Enable = 'on';
         end
         
         function AnalysisMenuQuantifySelected(app, event)
@@ -1475,6 +1509,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.nCell = round(app.imgT.nCell .* app.imgT.Participation / 100);
             app.imgT.PeakParticipation = cellfun(@nanmean, app.imgT.NetworkPeaks) ./ app.imgT.nCell * 100;
             app.PlotMenu.Enable = 'on';
+            app.FileMenuExport.Enable = 'on';
         end
         
         function AnalysisMenuReCalculateSelected(app, event)
@@ -1572,6 +1607,15 @@ classdef networkActivityApp < matlab.apps.AppBase
             togglePointer(app)
         end
         
+        function CellNumberEntered(app, event)
+            oldCell = app.curCell(1);
+            app.curCell = str2double(app.CellNumberText.String);
+            app.curCell(2) = oldCell;
+            togglePointer(app)
+            updatePlot(app)
+            togglePointer(app)
+        end
+        
         function CellNumberPlusPress(app, event)
             oldCell = app.curCell(1);
             nCells = numel(app.patchMask);
@@ -1661,6 +1705,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                     if numel(delPeak) > 1
                         % Narrow down to 2 frames
                         delPeak = find(spikeData > pointX-2/Fs & spikeData < pointX+2/Fs);
+                        if numel(delPeak) > 1
+                            % Get the first one in the list
+                            delPeak = delPeak(1);
+                        end
                     end
                 end
                 if numel(delPeak) > 1
@@ -1707,7 +1755,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             trace = cell2mat(app.imgT{imgFltr, 'DetrendData'});
             trace = trace(cellFltr,:);
             smoothTrace = wdenoise(trace, 'DenoisingMethod', 'BlockJS');
-            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) /2;
+            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) / 2;
             spikeLeng = halfDuration / Fs;
             switch app.options.DetectTrace
                 case 'Raw'
@@ -1728,21 +1776,26 @@ classdef networkActivityApp < matlab.apps.AppBase
                     tempSpikeData(2,tS-1) = [];
                     tempSpikeData(3,tS-1) = [];
                 else
-                if strcmpi(sel, 'alt')
-                    break
-                end
-                if isempty(pointX)
-                    tempSpikeData = nan;
-                    break
-                end
-                pointF = round(round(pointX) * Fs);
-                [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
-                    'SortStr', 'descend');
-                tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
-                tempSpikeData(2,tS) = tempInts(1);
-                tempSpikeData(3,tS) = tempWidths(1);
-                plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
-                tS = tS + 1;
+                    if strcmpi(sel, 'alt')
+                        break
+                    end
+                    if isempty(pointX)
+                        tempSpikeData = nan;
+                        break
+                    end
+                    pointF = round(round(pointX) * Fs);
+                    [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
+                        'SortStr', 'descend');
+                    tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
+                    % Check to see that the new spike is at least as far as the minimum distance
+                    if any((spikeData - tempSpikeData(1,tS)) < app.options.PeakMinDistance) || any((spikeData - tempSpikeData(1,tS)) >= app.options.PeakMinDistance)
+                        tempSpikeData(1,tS) = [];
+                    else
+                        tempSpikeData(2,tS) = tempInts(1);
+                        tempSpikeData(3,tS) = tempWidths(1);
+                        plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
+                        tS = tS + 1;
+                    end
                 end
             end
             % Add the data to the table and sort in order of event
@@ -1860,6 +1913,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Create the axes to store the images
             app.AxesDIC = axes('Units', 'pixels', 'Position', [70 410 400 400],...
                 'Visible', 'off');
+            app.AxesDIC.Toolbar.Visible = 'off';
             app.AxesDIC.Title.String = 'DIC Image';
             app.bcDIC = uicontrol(app.Figure, 'Style', 'pushbutton', 'Units', 'pixels',...
                 'Position', [70 810 80 20], 'String', 'Adjust B&C',...
@@ -1882,6 +1936,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.AxesPlot.YLabel.String = '\DeltaF/F_0';
             app.AxesPlot.XLabel.String = 'Time (s)';
             app.AxesPlot.TickDir = 'out';
+            app.AxesPlot.Toolbar.Visible = 'off';
+            app.AxesPlot.Interaction = [panInteraction zoomInteraction];
             % Create the components to interact with the images
             app.ListImagesLabel = uicontrol(app.Figure, 'Style', 'text',...
                 'String', 'Image Files', 'Units', 'pixels',...
@@ -1907,7 +1963,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Position', [1000 235 110 30], 'FontSize', 12);
             app.CellNumberText = uicontrol(app.Figure, 'Style', 'edit',...
                 'String', '1', 'Units', 'pixels', 'Position', [1050 215 50 30],...
-                'FontSize', 12, 'Enable', 'off');
+                'FontSize', 12, 'Enable', 'off',...
+                'Callback', createCallbackFcn(app, @CellNumberEntered, true));
             app.CellNumberPlus = uicontrol(app.Figure, 'Style', 'pushbutton',...
                 'String', 'Next', 'Units', 'pixels', 'Position', [1100 215 50 30],...
                 'FontSize', 12, 'Enable', 'off',...
@@ -2085,7 +2142,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Name', 'Relable condition', 'ToolBar', 'none', 'MenuBar', 'none',...
                 'NumberTitle', 'off');
             hList = uicontrol('Style', 'listbox', 'Position', [20 80 200 400],...
-                'Min', 0, 'Max', 2, 'String', cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false));
+                'Min', 0, 'Max', 2, 'String', cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, string(app.imgT.Condition), 'UniformOutput', false));
             hRadioButton = uibuttongroup('Title', 'Label to change',...
                 'Units', 'pixels', 'Position', [230 409 160 80],...
                 'FontSize', 11);
@@ -2110,6 +2167,14 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
                 hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false);
             end
+            % ask the user to order the conditions
+            uniCond = unique(app.imgT.Condition);
+            promptCond = 'Enter space-separated number for conditions:/n';
+            for c=1:numel(uniCond)
+                promptCond = sprintf('%s, %s', promptCond, uniCond{c});
+            end
+            condOrd = inputdlg(promptCond, 'Order conditions');
+            app.options.ConditionOrder = condOrd;
         end
     end
     
