@@ -1330,7 +1330,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             imgT = app.imgT;
 %             imgStore = app.imgDatastore;
             fullT = app.fullT;
-            save(savePath, 'dicT', 'imgT', 'imgStore', 'fullT');
+            save(savePath, 'dicT', 'imgT', 'fullT');
             cd(oldDir)
         end
         
