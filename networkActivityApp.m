@@ -145,7 +145,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             else
                 dicName = regexprep(app.curDIC, '_', ' ');
-                dicFile = app.imgDatastore.Files(contains(app.imgDatastore.Files, app.curDIC));
+                dicFile = app.dicT.Filename(contains(app.dicT.Filename, app.curDIC));
                 dicImage = imread(dicFile{:});
                 % Correct DIC image for bad illumination
                 dicImage2 = imcomplement(dicImage);
@@ -189,7 +189,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         function createStackMovie(app)
             warning('off', 'all');
             % Get the current file
-            imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
+            imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
             imgInfo = app.imgT{contains(app.imgT.CellID, app.curStak),'ImgProperties'};
             imgWidth = imgInfo(1);
             imgHeight = imgInfo(2);
@@ -294,7 +294,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         function manualRegistrationPressed(app, event)
             whatDIC = contains(app.dicT.CellID, app.curDIC);
             dicImage2 = app.dicT.CorImage{whatDIC};
-            imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
+            imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
             imgTif = imread(imgFile);
             hManReg = figure('Name', 'Manual registration');
             imshowpair(dicImage2, imgTif);
@@ -1123,13 +1123,11 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = imgPath;
                 % Load the data starting from the DIC/BF/Still image
                 hWait = waitbar(0, 'Loading images data');
-                %app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
-                app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif'});
                 app.DicMenu.Enable = 'on';
-                [~,imgFiles] = cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false);
+                imgFiles = dir(fullfile(imgPath, '*.tif'));
                 % Populate the DIC table
-                dicFltr = find(contains(app.imgDatastore.Files, app.options.StillName));
-                nameParts = regexp(imgFiles, '_', 'split');
+                dicFltr = find(contains({imgFiles.name}, app.options.StillName))';
+                nameParts = regexp({imgFiles.name}, '_', 'split')';
                 if isempty(dicFltr)
                     % It might be that there is no a DIC image. Ask the user for the name of the image to detect cells.
                     % For this consider a format or the type YYMMDD_Condition_cs_rec
@@ -1137,15 +1135,15 @@ classdef networkActivityApp < matlab.apps.AppBase
                     [condIdx, OKed] = listdlg('PromptString', 'Select condition of still image', 'ListString',conditionIDs);
                     if OKed
                         app.options.StillName = conditionIDs{condIdx};
-                        dicFltr = find(contains(app.imgDatastore.Files, app.options.StillName));
+                        dicFltr = find(contains({imgFiles.name}, app.options.StillName));
                     else
                         return
                     end
                     
                 end
                 tempT = table;
-                tempT.Filename = app.imgDatastore.Files(dicFltr);
-                tempT.CellID = imgFiles(dicFltr);
+                tempT.Filename = fullfile({imgFiles(dicFltr).folder}', {imgFiles(dicFltr).name}');
+                tempT.CellID = cellfun(@(x) x(1:end-4), {imgFiles(dicFltr).name}', 'UniformOutput', false);
                 if strcmp(app.options.StillName, 'DIC.')
                     expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{2}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
@@ -1154,11 +1152,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                     expIDs = cellfun(@(x) sprintf('%s_%s', x{1}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
                 end
-                tempDicImages = cell(numel(dicFltr), 2);
-                for i = 1:numel(dicFltr)
+                tempDicImages = cell(size(tempT, 1), 2);
+                for i = 1:size(tempT,1)
                     waitbar(i/numel(dicFltr), hWait, sprintf('Loading DIC data %0.2f%%', i/numel(dicFltr)*100));
-                    dicIndex = dicFltr(i);
-                    dicFile = app.imgDatastore.Files{dicIndex};
+                    dicFile = tempT.Filename{i};
                     dicImage = imread(dicFile);
                     % Correct DIC image for bad illumination
                     dicImage2 = imcomplement(dicImage);
@@ -1173,18 +1170,18 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
                 tempT.RawImage = tempDicImages(:,1);
                 tempT.CorImage = tempDicImages(:,2);
-                tempT.RoiSet = repmat({[]}, numel(dicFltr), 1);
+                tempT.RoiSet = repmat({[]}, size(tempT,1), 1);
                 % Store the dicT in the app
                 app.dicT = tempT;
+                
                 % Populate the imgT
-                imgFltr = find(~contains(app.imgDatastore.Files, app.options.StillName));
+                imgFltr = find(~contains({imgFiles.name}, app.options.StillName))';
                 app.stackDs = cell(numel(imgFltr),1);
                 tempT = cell(numel(imgFltr)+1, 14);
                 tempT(1,:) = {'Filename', 'CellID', 'Week', 'CoverslipID', 'RecID', 'Condition', 'ExperimentID', 'ImgProperties', 'ImgByteStrip', 'RawIntensity', 'FF0Intensity', 'SpikeLocations', 'SpikeIntensities', 'SpikeWidths'};
-                tempT(2:end,1) = app.imgDatastore.Files(imgFltr);
-                tempT(2:end,2) = imgFiles(imgFltr);
-                imgName = imgFiles(imgFltr);
-                imgIDs = regexp(imgName, '_', 'split');
+                tempT(2:end,1) = fullfile({imgFiles(imgFltr).folder}, {imgFiles(imgFltr).name});
+                tempT(2:end,2) = cellfun(@(x) x(1:end-4), {imgFiles(imgFltr).name}, 'UniformOutput', false);
+                imgIDs = nameParts(imgFltr);
                 for i = 1:numel(imgFltr)
                     waitbar(i/numel(imgFltr), hWait, sprintf('Loading movie data %0.2f%%', i/numel(imgFltr)*100));
                     tempT{i+1,3} = weeknum(datetime(imgIDs{i}{1}, 'InputFormat', 'yyMMdd'));
@@ -1201,7 +1198,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                         tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{3}]; % use to link the DIC to the movies
                     end
                     % get the imaging period (T) and frequency (Fs) from the file
-                    imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
+                    imgInfo = imfinfo(fullfile(imgFiles(imgFltr(i)).folder, imgFiles(imgFltr(i)).name));
                     switch app.options.Microscope
                         case 'Nikon A1'
                             T = imgInfo(1).ImageDescription;
@@ -1211,7 +1208,6 @@ classdef networkActivityApp < matlab.apps.AppBase
                                 T = 1/(app.options.Frequency);
                             end
                         case 'Others'
-                            imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
                             if app.options.Frequency > 0
                                 T = 1/(app.options.Frequency);
                             else
@@ -1248,34 +1244,33 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = filePath;
                 togglePointer(app)
                 networkFiles = load(fullfile(filePath, fileName));
-                if isfield(networkFiles, 'imgStore')
-                    if ~isfile(networkFiles.imgStore.Files(1))
-                        % Files are re-located
-                        newPath = uigetdir(app.options.LastPath, 'Relocate files');
-                        networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif'});
-                        for ii = 1:size(networkFiles.dicT,1)
-                            [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
-                            %networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
-                            networkFiles.dicT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
-                        end
-                        for ii = 1:size(networkFiles.imgT,1)
-                            [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
-                            %networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
-                            networkFiles.imgT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
-                        end
-                        %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
-                        %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
-                        %networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
-                    end
-                    if isempty(app.imgDatastore)
-                        app.imgDatastore = networkFiles.imgStore;
-                    else
-                        oldImgPath = unique(cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false));
-                        allImgPaths = [oldImgPath; fileparts(networkFiles.imgStore.Files{1})];
-                        app.imgDatastore = imageDatastore(allImgPaths);
-                    end
-                    app.ToggleViewStack.Enable = 'on';
-                end
+%                 if isfield(networkFiles, 'imgStore')
+%                     if ~isfile(networkFiles.imgStore.Files(1))
+%                         % Files are re-located
+%                         newPath = uigetdir(app.options.LastPath, 'Relocate files');
+%                         networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif'});
+%                         for ii = 1:size(networkFiles.dicT,1)
+%                             [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
+%                             %networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+%                             networkFiles.dicT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
+%                         end
+%                         for ii = 1:size(networkFiles.imgT,1)
+%                             [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
+%                             %networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+%                             networkFiles.imgT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
+%                         end
+%                         %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
+%                         %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
+%                         %networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
+%                     end
+%                     if isempty(app.imgDatastore)
+%                         app.imgDatastore = networkFiles.imgStore;
+%                     else
+%                         oldImgPath = unique(cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false));
+%                         allImgPaths = [oldImgPath; fileparts(networkFiles.imgStore.Files{1})];
+%                         app.imgDatastore = imageDatastore(allImgPaths);
+%                     end
+%                 end
                 if isfield(networkFiles, 'dicT')
                     if isempty(app.dicT)
                         app.dicT = networkFiles.dicT;
@@ -1299,21 +1294,20 @@ classdef networkActivityApp < matlab.apps.AppBase
                         app.imgT = [app.imgT; networkFiles.imgT];
                     end
                     app.AnalysisMenu.Enable = true;
+                    app.ToggleViewStack.Enable = 'on';
                 end
                 if isfield(networkFiles, 'fullT')
                     app.fullT = networkFiles.fullT;
                 end
                 if isfield(networkFiles, 'dicT') && isfield(networkFiles, 'imgT')
-                    if ~isempty(app.imgT.SpikeLocations{1})
-                        app.RadioSingleTrace.Enable = 'on';
-                        app.RadioAllMean.Enable = 'on';
-                        app.PlotMenu.Enable = 'on';
-                        app.CellNumberText.Enable = 'on';
-                        app.FileMenuExport.Enable = 'on';
-                        app.curDIC = app.dicT.CellID{1};
-                        if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
-                            detrendData(app)
-                        end
+                    app.RadioSingleTrace.Enable = 'on';
+                    app.RadioAllMean.Enable = 'on';
+                    app.PlotMenu.Enable = 'on';
+                    app.CellNumberText.Enable = 'on';
+                    app.FileMenuExport.Enable = 'on';
+                    app.curDIC = app.dicT.CellID{1};
+                    if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
+                        detrendData(app)
                     end
                     updateDIC(app, true)
                 else
@@ -1334,7 +1328,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             savePath = fullfile(filePath, fileName);
             dicT = app.dicT;
             imgT = app.imgT;
-            imgStore = app.imgDatastore;
+%             imgStore = app.imgDatastore;
             fullT = app.fullT;
             save(savePath, 'dicT', 'imgT', 'imgStore', 'fullT');
             cd(oldDir)
@@ -1578,30 +1572,35 @@ classdef networkActivityApp < matlab.apps.AppBase
                 createStackMovie(app);
             else
                 togglePointer(app)
-                imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
-                imgTif = imread(imgFile);
+                imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
                 [~, fileName] = fileparts(imgFile);
-                fileFltr = find(contains(app.imgT.CellID, fileName));
-                if ~contains(fileName, app.options.Reference) && app.options.Registration
-                    if any(strcmp('RegEst', app.imgT.Properties.VariableNames))
-                        if isempty(cell2mat(app.imgT{fileFltr, 'RegEst'}))
-                            tyrFile = app.imgT{find(contains(app.imgT{1:fileFltr,'CellID'}, 'Tyrode'),1,'last'),'Filename'};
-                            imgTyr = imread(cell2mat(tyrFile));
-                            imgOut = imref2d(size(imgTyr));
-                            tformEstimate = imregcorr(imgTif, imgTyr, 'translation');
-                            app.imgT{fileFltr,'RegEst'} = {tformEstimate.T};
-                        else
-                            tformEstimate = affine2d(cell2mat(app.imgT{fileFltr,'RegEst'}));
-                            imgOut = imref2d(size(imgTif));
+                if isfile(imgFile)
+                    imgTif = imread(imgFile);
+                    fileFltr = find(contains(app.imgT.CellID, fileName));
+                    if ~contains(fileName, app.options.Reference) && app.options.Registration
+                        if any(strcmp('RegEst', app.imgT.Properties.VariableNames))
+                            if isempty(cell2mat(app.imgT{fileFltr, 'RegEst'}))
+                                tyrFile = app.imgT{find(contains(app.imgT{1:fileFltr,'CellID'}, 'Tyrode'),1,'last'),'Filename'};
+                                imgTyr = imread(cell2mat(tyrFile));
+                                imgOut = imref2d(size(imgTyr));
+                                tformEstimate = imregcorr(imgTif, imgTyr, 'translation');
+                                app.imgT{fileFltr,'RegEst'} = {tformEstimate.T};
+                            else
+                                tformEstimate = affine2d(cell2mat(app.imgT{fileFltr,'RegEst'}));
+                                imgOut = imref2d(size(imgTif));
+                            end
                         end
+                        imgTif = imwarp(imgTif, tformEstimate, 'OutputView', imgOut);
                     end
-                    imgTif = imwarp(imgTif, tformEstimate, 'OutputView', imgOut);
+                    app.minMax.Stack = stretchlim(imgTif,[0 .999]);
+                    app.hStack = imshow(imadjust(imgTif, app.minMax.Stack), 'Parent', app.AxesStack);
+                    app.movieData = [];
+                    app.curSlice = [];
+                    app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
+                else
+                    app.AxesStack.Title.String = sprintf('File %s not found', regexprep(app.curStak, '_', ' '));
+                    app.AxesStack.Visible = 'on';
                 end
-                app.minMax.Stack = stretchlim(imgTif,[0 .999]);
-                app.hStack = imshow(imadjust(imgTif, app.minMax.Stack), 'Parent', app.AxesStack);
-                app.movieData = [];
-                app.curSlice = [];
-                app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
                 togglePointer(app)
             end
             warning('on', 'all')
@@ -1693,6 +1692,14 @@ classdef networkActivityApp < matlab.apps.AppBase
         function ToggleViewStackPressed(app, event)
             if app.ToggleViewStack.Value == 1
                 if isempty(app.movieData) || ~matches(app.AxesStack.Title.String, regexprep(app.curStak, '_', ' '))
+                    if ~isfile(app.imgT.Filename(1))
+                        % Files are re-located
+                        newPath = uigetdir(app.options.LastPath, 'Relocate files');
+                        dicFiles = fullfile(newPath, {app.dicT.CellID{:}})';
+                        app.dicT.Filename = cellfun(@(x) sprintf('%s.tif', x), dicFiles, 'UniformOutput', false);
+                        imgFiles = fullfile(newPath, {app.imgT.CellID{:}})';
+                        app.imgT.Filename = cellfun(@(x) sprintf('%s.tif', x), imgFiles, 'UniformOutput', false);
+                    end
                     togglePointer(app)
                     app.ToggleViewStack.BackgroundColor = 'white';
                     createStackMovie(app)
@@ -1958,7 +1965,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Visible', 'off');
             app.manualReg = uicontrol(app.Figure, 'Style', 'pushbutton', 'Units', 'pixels',...
                 'Position', [550 810 80 20], 'String', 'Registration',...
-                'Visible', 'on', 'Callback', createCallbackFcn(app, @manualRegistrationPressed, true));
+                'Visible', 'off', 'Callback', createCallbackFcn(app, @manualRegistrationPressed, true));
             app.AxesStack.Title.String = 'Ca^{2+} Movie';
             app.SliderImageStack = uicontrol(app.Figure, 'Style', 'slider',...
                 'Units', 'pixels', 'Position', [550 385 400 20],...
@@ -2145,6 +2152,11 @@ classdef networkActivityApp < matlab.apps.AppBase
                 if ~isempty(app.imgT)
                     detrendData(app)
                     updatePlot(app);
+                end
+                if app.options.Registration
+                    app.manualReg.Visible = 'on';
+                else
+                    app.manualReg.Visible = 'off';
                 end
             end
             function resetOptionPressed(app, event)
