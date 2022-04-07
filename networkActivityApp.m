@@ -145,7 +145,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             else
                 dicName = regexprep(app.curDIC, '_', ' ');
-                dicFile = app.imgDatastore.Files(contains(app.imgDatastore.Files, app.curDIC));
+                dicFile = app.dicT.Filename(contains(app.dicT.Filename, app.curDIC));
                 dicImage = imread(dicFile{:});
                 % Correct DIC image for bad illumination
                 dicImage2 = imcomplement(dicImage);
@@ -172,6 +172,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.cellsMask = [];
             end
             populateImageList(app)
+            app.AxesDIC.Toolbar.Visible = 'off';
         end
         
         function bcDICpressed(app, event)
@@ -188,7 +189,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         function createStackMovie(app)
             warning('off', 'all');
             % Get the current file
-            imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
+            imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
             imgInfo = app.imgT{contains(app.imgT.CellID, app.curStak),'ImgProperties'};
             imgWidth = imgInfo(1);
             imgHeight = imgInfo(2);
@@ -283,13 +284,17 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             % Add the mask to the movie
             copyobj(app.patchMask, app.AxesStack)
+            hPatch = findobj(app.AxesStack, 'Type', 'Patch');
+            for p = 1:length(hPatch)
+                hPatch(p).FaceColor = 'none';
+            end
         end
         
         % Function to manually evaluate the drift between images
         function manualRegistrationPressed(app, event)
             whatDIC = contains(app.dicT.CellID, app.curDIC);
             dicImage2 = app.dicT.CorImage{whatDIC};
-            imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
+            imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
             imgTif = imread(imgFile);
             hManReg = figure('Name', 'Manual registration');
             imshowpair(dicImage2, imgTif);
@@ -509,7 +514,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 sEnd = spikeEnd{c};
                 if ~isempty(sStart)
                     for s = 1:size(sStart,2)
-                        tempRast(c,sStart(2,s):sEnd(2,s)) = c;
+                        tempRast(c,sStart(2,s):min(sEnd(:,s))) = c;
                     end
                 end
             end
@@ -554,6 +559,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             networkFreqGauss = sum(networkPeaks >= netThreshold) / totTime; % Use the maximum number of cells
             % Calculate the interspike intervals, and time-frequency
             interSpikeInterval = cellfun(@(x) diff(x) / Fs, tempLoc, 'UniformOutput', false);
+            qcd = @(x) (quantile(x, .75) - quantile(x, .25)) / (quantile(x, .75) + quantile(x, .25));
+            ISI_CoV = cellfun(qcd, interSpikeInterval);
             nSample = 5;
             timeISI = 0:nFrames/nSample:nFrames;
             tempMeanISI = nan(size(tempLoc,1),nSample);
@@ -566,25 +573,30 @@ classdef networkActivityApp < matlab.apps.AppBase
                     end
                 end
             end
+            % Calculate and keep track of subthreshold spikes (as for now defined as promininence < 0.2 a.u.)
+            subFltr = cellfun(@(x) x<=0.2, spikePeak, 'UniformOutput', false);
+            subRatio = cellfun(@(x) sum(x)/numel(x), subFltr);
             % Calculate if there are bursts
             
             % Save the data to the table
             app.imgT.SpikeRaster{imgIdx} = tempRast;
             app.imgT.Participation(imgIdx) = sum(any(~isnan(tempRast), 2)) / nCell * 100;
             app.imgT.CellFrequency{imgIdx} = tempFreq;
-            app.imgT.SynchronousLocations{imgIdx} = synLocs;
-            app.imgT.SynchronousPercentages{imgIdx} = synPC;
-            app.imgT.NetworkFrequency(imgIdx) = networkFreq;
+            app.imgT.SubthresholdFltr{imgIdx} = subFltr';
+            app.imgT.SubthresholdRatio{imgIdx} = subRatio';
+%             app.imgT.SynchronousLocations{imgIdx} = synLocs;
+%             app.imgT.SynchronousPercentages{imgIdx} = synPC;
+            app.imgT.NetworkFrequency(imgIdx) = networkFreqGauss;
             app.imgT.InterSpikeInterval{imgIdx} = interSpikeInterval;
-            app.imgT.TimeInterSpikeInterval{imgIdx} = nanmean(tempMeanISI);
-            app.imgT.NetworkFrequencyGauss(imgIdx) = networkFreqGauss;
-            app.imgT.NetworkPeaksGauss{imgIdx} = networkPeaks;
-            app.imgT.NetworkLocsGauss{imgIdx} = networkLocs;
-            app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
+            app.imgT.InterSpikeIntervalCoV{imgIdx} = ISI_CoV;
+%             app.imgT.TimeInterSpikeInterval{imgIdx} = nanmean(tempMeanISI);
+            app.imgT.NetworkPeaks{imgIdx} = networkPeaks;
+            app.imgT.NetworkLocs{imgIdx} = networkLocs;
+%             app.imgT.NetworkFWHMGauss{imgIdx} = networkFWHM;
             app.imgT.NetworkRaster{imgIdx} = networkRaster;
             app.imgT.SpikeStartAndEnd{imgIdx} = cellfun(@(x, y) [x;y], spikeStart, spikeEnd, 'UniformOutput', false);
-            app.imgT.NewDuration{imgIdx} = cellfun(@(x,y) (y(2,:) - x(2,:)) / Fs, spikeStart, spikeEnd, 'UniformOutput', false)';
-            app.imgT.NewSpikePeak{imgIdx} = spikePeak';
+            app.imgT.SpikeWidths{imgIdx} = cellfun(@(x,y) (y(2,:) - x(2,:)) / Fs, spikeStart, spikeEnd, 'UniformOutput', false)';
+            app.imgT.SpikeIntensities{imgIdx} = spikePeak';
             app.imgT.CellRiseTime{imgIdx} = riseTime';
             app.imgT.CellDecayCon{imgIdx} = cellfun(@(x) x(1,:), decayTau, 'UniformOutput', false)';
             app.imgT.CellDecayTau{imgIdx} = cellfun(@(x) x(2,:), decayTau, 'UniformOutput', false)';
@@ -610,7 +622,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 nSpikes = numel(spikeLocs);
                 indexLB = nan(2, nSpikes);
                 indexRB = nan(2, nSpikes);
-                halfMax = nan(1, nSpikes);
+                promInt = nan(1, nSpikes);
                 decayTauA = nan(1, nSpikes);
                 decayTauB = nan(1, nSpikes);
                 for s = 1:nSpikes
@@ -657,29 +669,32 @@ classdef networkActivityApp < matlab.apps.AppBase
                         end
                     end
                     indexRB(1,s) = tempIdx;
-                    % Calculate the FWHM
-                    baseInt = (smoothData(indexLB(1,s)) + smoothData(indexRB(1,s))) / 2;
-                    halfMax(s) = (baseInt + smoothData(spikeLocs(s))) / 2;
-                    tempIdx = find(smoothData(indexLB(1,s):indexRB(1,s)) > halfMax(s), 1, 'first') - 2 + indexLB(1,s);
+                    % Calculate the FWHM (based on the prominence)
+                    baseInt = min(traceData(t, indexLB(1,s):indexRB(1,s)));
+                    promInt(s) = traceData(t, spikeLocs(s)) - baseInt;
+                    halfMax = baseInt + promInt(s)/2;
+                    tempIdx = find(smoothData(indexLB(1,s):indexRB(1,s)) > halfMax, 1, 'first') - 2 + indexLB(1,s);
                     if isempty(tempIdx) || tempIdx == 0
                         tempIdx = 1;
                     end
                     indexLB(2,s) = tempIdx;
-                    tempIdx = find(smoothData(indexLB(1,s):indexRB(1,s)) > halfMax(s), 1, 'last') + 2 + indexLB(1,s);
+                    tempIdx = find(smoothData(indexLB(1,s):indexRB(1,s)) > halfMax, 1, 'last') + 2 + indexLB(1,s);
                     if isempty(tempIdx)
                         tempIdx = length(smoothData);
                     end
                     indexRB(2,s) = tempIdx;
                 end
                 % Work with parallel for loop to calculate the decay fit
+                tempTrace = traceData(t,:);
                 parfor s = 1:nSpikes
                     % Calculate the decay constant
                     decayTime = (spikeLocs(s):indexRB(1,s)) / Fs;
-                    decayTrace = traceData(t, round(decayTime * Fs));
+                    decayTrace = tempTrace(spikeLocs(s):indexRB(1,s));
                     expFit = fittype( 'exp1' );
                     fitOpts = fitoptions( 'Method', 'NonlinearLeastSquares' );
                     fitOpts.Display = 'Off';
                     fitOpts.Normalize = 'On';
+                    fitOpts.StartPoint = [0 0];
                     if numel(decayTrace) > 2
                         decayFit = fit(decayTime', decayTrace', expFit, fitOpts);
                         % To get the fitted trace use: fitTrace = decayFit.a * exp(decayFit.b .* ((decayTime-mean(decayTime))/std(decayTime)));
@@ -690,7 +705,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 spikeStart{t} = indexLB;
                 spikeLoc{t} = spikeLocs;
                 spikeEnd{t} = indexRB;
-                spikePeak{t} = halfMax;
+                spikePeak{t} = promInt;
                 spikeRise{t} = (spikeLocs - indexLB(1,:)) / Fs;
                 spikeDecay{t} = [decayTauA; decayTauB];
             end
@@ -783,6 +798,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 hLeg = get(app.AxesPlot, 'Legend');
                 hLeg.String = {hLeg.String{1}, hLeg.String{2}};
             end
+            app.AxesPlot.Toolbar.Visible = 'on';
         end
         
         % Brightness and contrast (similar to ImageJ)
@@ -911,98 +927,187 @@ classdef networkActivityApp < matlab.apps.AppBase
         
         % Plot a general overview of the data and the coefficient of variation
         function PlotOverviewSelected(app, event)
-            % Create the labels
-            yLabels = {'Spike frequency per cell (Hz)', 'Spike rise time (s)', 'Spike Intensity (a.u.)', 'Spike FWHM (s)', 'Spike decay \tau (s)', 'Interspike interval (s)', 'Network frequency (Hz)', 'Spike participation (%)';...
-                'Spike frequency CoV', 'Spike rise time CoV', 'Spike Intensity CoV', 'Spike FWHM CoV', 'Spike decay \tau CoV', 'Interspike interval CoV', 'Network frequency CoV', 'Spike participation CoV'};
-            yValues = {'MedianFreq', 'MedianRiseTime', 'MedianInt', 'NewMedianFWHM', 'MedianDecayTau', 'MedianISI', 'NetworkFrequencyGauss', 'PeakParticipation'};
-            nPlot = 8;
-            figure
-            %cmap = lines;
-            cmap1 = {'#000000', '#42AD2C', '#AD4492', '#BB81AD'};
-            %cmap1 = {'#000000', '#636363', '#42AD2C', '#75BB67', '#AD4492', '#BB81AD'};
-            cmap = nan(length(cmap1), 3);
-            for c = 1:length(cmap1)
-                cmap(c,:) = sscanf(cmap1{c}(2:end),'%2x%2x%2x',[1 3])/255;
-            end
-            % Get the broups
-            conditions = categorical(app.imgT.Condition);
-            uniCond = categories(conditions);
+            % Get the conditions
+            myCondition = categorical(app.imgT.Condition);
+            uniCond = categories(myCondition);
             nCond = numel(uniCond);
+            % Check if there are multiple recordings per FOV
+            app.imgT.RecID = categorical(app.imgT.RecID);
+            recID = categories(app.imgT.RecID);
+            nRec = numel(recID);
             % Get the replicas
             batchList = app.imgT.Week;
             weeks = unique(batchList);
             nWeeks = numel(weeks);
-            for p = 1:nPlot
-                % Create the main plot
-                subplot(2,nPlot,p); hold on
-                yData = app.imgT{:,yValues(p)};
-                QCD = nan(nCond, nWeeks);
-                for c = 1:nCond
-                    condFltr = conditions == uniCond(c);
-                    tempY = sort(yData(condFltr));
-                    quantY = quantile(tempY, [0.25 0.5 0.75]);
-                    minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
-                    lowW = find(tempY>=minW,1,'first');
-                    minW = tempY(lowW);
-                    maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
-                    highW = find(tempY<=maxW,1,'last');
-                    maxW = tempY(highW);
-                    % Boxplot
-                    patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
-                    plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
-                    plot([c c], [minW quantY(1)], 'color', cmap(c,:));
-                    plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
-                    % Add the data points
-                    x = linspace(c - 0.15, c + 0.15, nWeeks);
-                    for w = 1:nWeeks
-                        weekFltr = batchList == weeks(w);
-                        if sum(weekFltr & condFltr) > 0
-                            plot(x(w),yData(weekFltr & condFltr), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
-                            % calculate the quartile coefficient of dispersion
-                            QCD(c,w) = (quantile(yData(weekFltr & condFltr), 0.75) - quantile(yData(weekFltr & condFltr), 0.25)) / (quantile(yData(weekFltr & condFltr), 0.75) + quantile(yData(weekFltr & condFltr), 0.25)) * 100;
-                        end
-                    end
+            % Ask wich condition is the control
+            if ~isfield(app.options, 'ConditionOrder')
+                uniCond = unique(app.imgT.Condition);
+                promptCond = 'Enter space-separated number for conditions:/n';
+                for c=1:numel(uniCond)
+                    promptCond = sprintf('%s, %s', promptCond, uniCond{c});
                 end
-                % Add the label
-                set(gca, 'TickDir', 'out');
-                xlim([.5 nCond+.5])
-                set(gca, 'XTick', 1:nCond);
-                set(gca, 'XTickLabel', uniCond);
-                ylabel(yLabels(1,p))
-                % Add the coefficent of variation (or better quartile coefficient of dispersion) calculated per week
-                subplot(2, nPlot, p+nPlot); hold on
-                for c = 1:nCond
-                    tempY = sort(QCD(c,:));
-                    quantY = quantile(tempY, [0.25 0.5 0.75]);
-                    minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
-                    lowW = find(tempY>=minW,1,'first');
-                    minW = tempY(lowW);
-                    maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
-                    highW = find(tempY<=maxW,1,'last');
-                    maxW = tempY(highW);
-                    % Boxplot
-                    patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
-                    plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
-                    plot([c c], [minW quantY(1)], 'color', cmap(c,:));
-                    plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
-                    % Add the data points
-                    x = linspace(c - 0.15, c + 0.15, nWeeks);
-                    for w = 1:nWeeks
-                        weekFltr = batchList == weeks(w);
-                        if sum(weekFltr & condFltr) > 0
-                            plot(x(w),QCD(c,w), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
-                        end
-                    end
-                end
-                % Add the label
-                set(gca, 'TickDir', 'out');
-                xlim([.5 nCond+.5])
-                set(gca, 'XTick', 1:nCond);
-                set(gca, 'XTickLabel', uniCond);
-                ylabel(yLabels(2,p))
+                condOrd = inputdlg(promptCond, 'Order conditions');
+                app.options.ConditionOrder = condOrd;
             end
-        end
-        
+            [contIdx, ~] = listdlg('ListString', uniCond, 'PromptString', 'Select control condition', 'SelectionMode', 'single');
+            contID = uniCond{contIdx};
+            myCondition = reordercats(myCondition, str2num(app.options.ConditionOrder{1}));
+            
+            %%% CONDITIONAL FINGERPRINT%%%
+            % Select the variables and create a list of labels
+            varID = [17 21 31:34 39:42 47 49 50 52 53];
+            varNames = {'Participation','Network Frequency','Intensity','Duration','Rise Time','Decay \tau','Sub Intensity','Sub Duration','Sub Rise Time','Sub Decay \tau','Inter spike interval','ISI CoV','Cell Frequency','# of Cell','Peak Participation'};
+            nFeature = numel(varID);
+            % Define the dimensions and create the space holders
+            matValue = [];
+            groupNames = cell(1,(nRec*(nCond-1)));
+            gr=1;
+            for r = 1:nRec
+                recT = app.imgT(app.imgT.RecID == recID(r), :);
+                recT.Condition = myCondition(app.imgT.RecID == recID(r));
+                recT.Condition = removecats(recT.Condition);
+                conds = unique(recT.Condition);
+                nCond = numel(conds);
+                tempValue = zeros(nCond-1, nFeature);
+                % Calculate the matrix of differences
+                for v = 1:nFeature
+                    tempData = recT{:,varID(v)};
+                    % Loop through the weeks to normalize the data per culture batch
+                    for w = 1:nWeeks
+                        weekFltr = recT.Week == weeks(w);
+                        controlFltr = recT.Condition == contID;
+                        tempMean = mean(tempData(controlFltr & weekFltr), 'omitnan');
+                        if tempMean > 0 % required in the case that there is no network activity (as in 1mM)
+                            tempData(weekFltr) = tempData(weekFltr) / tempMean;
+                        end
+                    end
+                    % Store the data in a matrix
+                    for c = 2:nCond
+                        tempValue(c-1, v) = log2(mean(tempData(recT.Condition == conds(c) & tempData > 0), 'omitnan'));
+                        if v == 1
+                            groupNames{gr} = sprintf('%s %s', conds(c), recID{r});
+                            gr = gr+1;
+                        end
+                    end
+                end
+                matValue = [matValue; tempValue];
+            end
+            % Plot the conditional fingerprints
+            % Create divergin colormap, from [0 0 1] to [1 1 1], then [1 1 1] to [1 0 0];
+            m1 = 10000*0.5;
+            r = (0:m1-1)'/max(m1-1,1);
+            g = r;
+            r = [r; ones(m1,1)];
+            g = [g; flipud(g)];
+            b = flipud(r);
+            cmap = flipud([r g b]);
+            figure('Name', 'Conditional fingeprint')
+            colormap(cmap)
+            maxVal = max(abs([min(min(matValue)), max(max(matValue))]));
+            imagesc([-repmat(maxVal, (nCond-1)*nRec, 1) matValue repmat(maxVal, (nCond-1)*nRec, 1)]);
+            xlim([1.5 numel(varID)+1.5])
+            colorbar
+            set(gca, 'XTick', 2:numel(varID)+1)
+            set(gca, 'XTickLabel', varNames)
+            set(gca, 'XTickLabelRotation', 45)
+            set(gca, 'YTick', 1:(nCond-1)*nRec)
+            set(gca, 'YTickLabel', groupNames)
+            box off
+            set(gca, 'TickDir', 'out')
+            hold on
+            for r = 0.5:1:((nCond-1)*nRec)+0.5
+                plot([0 nFeature+2], [r r], 'k')
+            end
+            for c = 1.5:1:nFeature+1.5
+                plot([c c], [0 nCond*nRec], 'k')
+            end
+            
+            %%%BOXPLOTS OF FINGERPRINT%%%
+            % Calculate the 95% confidence interval (of the mean) and overlay to the graph
+            CIFcn = @(x,p) nanstd(x)/sqrt(sum(~isnan(x))) * tinv(abs([0,1]-(1-p/100)/2),sum(~isnan(x))-1) + nanmean(x);
+            for r = 1:nRec
+                recT = app.imgT(app.imgT.RecID == recID(r), :);
+                recT.Condition = myCondition(app.imgT.RecID == recID(r));
+                recT.Condition = removecats(recT.Condition);
+                uniCond = categories(recT.Condition);
+                nCond = numel(uniCond);
+                figure('Name', sprintf('Overview of recording: %s', recID{r}))
+                cmap = lines;
+                for p = 1:nFeature
+                    % Create the main plot
+                    subplot(3,5,p); hold on
+                    yData = recT{:,varID(p)};
+%                     QCD = nan(nCond, nWeeks);
+                    % CI
+                    CI_Cont = CIFcn(recT{recT.Condition==contID, varID(p)}, 95);
+                    patch([0 nCond+1 nCond+1 0], [CI_Cont(1) CI_Cont(1) CI_Cont(2) CI_Cont(2)], cmap(1,:), 'EdgeColor', 'none', 'FaceAlpha',.1)
+                    for c = 1:nCond
+                        condFltr = recT.Condition == uniCond(c);
+                        tempY = sort(yData(condFltr));
+                        quantY = quantile(tempY, [0.25 0.5 0.75]);
+                        minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
+                        lowW = find(tempY>=minW,1,'first');
+                        minW = tempY(lowW);
+                        maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
+                        highW = find(tempY<=maxW,1,'last');
+                        maxW = tempY(highW);
+                        % Boxplot
+                        patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
+                        plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
+                        plot([c c], [minW quantY(1)], 'color', cmap(c,:));
+                        plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
+                        % Add the data points
+                        x = linspace(c - 0.15, c + 0.15, nWeeks);
+                        for w = 1:nWeeks
+                            weekFltr = recT.Week == weeks(w);
+                            if sum(weekFltr & condFltr) > 0
+                                plot(x(w),yData(weekFltr & condFltr), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
+                                % calculate the quartile coefficient of dispersion
+%                                 QCD(c,w) = (quantile(yData(weekFltr & condFltr), 0.75) - quantile(yData(weekFltr & condFltr), 0.25)) / (quantile(yData(weekFltr & condFltr), 0.75) + quantile(yData(weekFltr & condFltr), 0.25)) * 100;
+                            end
+                        end
+                    end
+                    % Add the label
+                    set(gca, 'TickDir', 'out');
+                    xlim([.5 nCond+.5])
+                    set(gca, 'XTick', 1:nCond);
+                    set(gca, 'XTickLabel', uniCond);
+                    set(gca, 'XTickLabelRotation', 45)
+                    ylabel(varNames(p))
+%                     % Add the coefficent of variation (or better quartile coefficient of dispersion) calculated per week
+%                     subplot(2, nPlot, p+nPlot); hold on
+%                     for c = 1:nCond
+%                         tempY = sort(QCD(c,:));
+%                         quantY = quantile(tempY, [0.25 0.5 0.75]);
+%                         minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
+%                         lowW = find(tempY>=minW,1,'first');
+%                         minW = tempY(lowW);
+%                         maxW = quantY(3) + 1.5*(quantY(3)-quantY(1));
+%                         highW = find(tempY<=maxW,1,'last');
+%                         maxW = tempY(highW);
+%                         % Boxplot
+%                         patch([c-.25 c+.25 c+.25 c-.25], [quantY(1) quantY(1) quantY(3) quantY(3)], cmap(c,:), 'FaceAlpha', .3, 'EdgeColor', cmap(c,:));
+%                         plot([c-.25 c+.25], [quantY(2) quantY(2)], 'color', cmap(c,:), 'LineWidth', 2);
+%                         plot([c c], [minW quantY(1)], 'color', cmap(c,:));
+%                         plot([c c], [quantY(3) maxW], 'color', cmap(c,:));
+%                         % Add the data points
+%                         x = linspace(c - 0.15, c + 0.15, nWeeks);
+%                         for w = 1:nWeeks
+%                             weekFltr = batchList == weeks(w);
+%                             if sum(weekFltr & condFltr) > 0
+%                                 plot(x(w),QCD(c,w), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
+%                             end
+%                         end
+%                     end
+%                     % Add the label
+%                     set(gca, 'TickDir', 'out');
+%                     xlim([.5 nCond+.5])
+%                     set(gca, 'XTick', 1:nCond);
+%                     set(gca, 'XTickLabel', uniCond);
+%                     ylabel(yLabels(2,p))
+                end
+            end
+        end 
     end
     
     % Callbacks methods
@@ -1018,13 +1123,11 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = imgPath;
                 % Load the data starting from the DIC/BF/Still image
                 hWait = waitbar(0, 'Loading images data');
-                %app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif', '.nd2', '.stk'});
-                app.imgDatastore = imageDatastore(imgPath, 'FileExtensions', {'.tif'});
                 app.DicMenu.Enable = 'on';
-                [~,imgFiles] = cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false);
+                imgFiles = dir(fullfile(imgPath, '*.tif'));
                 % Populate the DIC table
-                dicFltr = find(contains(app.imgDatastore.Files, app.options.StillName));
-                nameParts = regexp(imgFiles, '_', 'split');
+                dicFltr = find(contains({imgFiles.name}, app.options.StillName))';
+                nameParts = regexp({imgFiles.name}, '_', 'split')';
                 if isempty(dicFltr)
                     % It might be that there is no a DIC image. Ask the user for the name of the image to detect cells.
                     % For this consider a format or the type YYMMDD_Condition_cs_rec
@@ -1032,15 +1135,15 @@ classdef networkActivityApp < matlab.apps.AppBase
                     [condIdx, OKed] = listdlg('PromptString', 'Select condition of still image', 'ListString',conditionIDs);
                     if OKed
                         app.options.StillName = conditionIDs{condIdx};
-                        dicFltr = find(contains(app.imgDatastore.Files, app.options.StillName));
+                        dicFltr = find(contains({imgFiles.name}, app.options.StillName));
                     else
                         return
                     end
                     
                 end
                 tempT = table;
-                tempT.Filename = app.imgDatastore.Files(dicFltr);
-                tempT.CellID = imgFiles(dicFltr);
+                tempT.Filename = fullfile({imgFiles(dicFltr).folder}', {imgFiles(dicFltr).name}');
+                tempT.CellID = cellfun(@(x) x(1:end-4), {imgFiles(dicFltr).name}', 'UniformOutput', false);
                 if strcmp(app.options.StillName, 'DIC.')
                     expIDs = cellfun(@(x) sprintf('%s_%s_%s', x{1}, x{2}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
@@ -1049,11 +1152,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                     expIDs = cellfun(@(x) sprintf('%s_%s', x{1}, x{3}), nameParts, 'UniformOutput', false);
                     tempT.ExperimentID = expIDs(dicFltr);
                 end
-                tempDicImages = cell(numel(dicFltr), 2);
-                for i = 1:numel(dicFltr)
+                tempDicImages = cell(size(tempT, 1), 2);
+                for i = 1:size(tempT,1)
                     waitbar(i/numel(dicFltr), hWait, sprintf('Loading DIC data %0.2f%%', i/numel(dicFltr)*100));
-                    dicIndex = dicFltr(i);
-                    dicFile = app.imgDatastore.Files{dicIndex};
+                    dicFile = tempT.Filename{i};
                     dicImage = imread(dicFile);
                     % Correct DIC image for bad illumination
                     dicImage2 = imcomplement(dicImage);
@@ -1068,18 +1170,18 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
                 tempT.RawImage = tempDicImages(:,1);
                 tempT.CorImage = tempDicImages(:,2);
-                tempT.RoiSet = repmat({[]}, numel(dicFltr), 1);
+                tempT.RoiSet = repmat({[]}, size(tempT,1), 1);
                 % Store the dicT in the app
                 app.dicT = tempT;
+                
                 % Populate the imgT
-                imgFltr = find(~contains(app.imgDatastore.Files, app.options.StillName));
+                imgFltr = find(~contains({imgFiles.name}, app.options.StillName))';
                 app.stackDs = cell(numel(imgFltr),1);
                 tempT = cell(numel(imgFltr)+1, 14);
                 tempT(1,:) = {'Filename', 'CellID', 'Week', 'CoverslipID', 'RecID', 'Condition', 'ExperimentID', 'ImgProperties', 'ImgByteStrip', 'RawIntensity', 'FF0Intensity', 'SpikeLocations', 'SpikeIntensities', 'SpikeWidths'};
-                tempT(2:end,1) = app.imgDatastore.Files(imgFltr);
-                tempT(2:end,2) = imgFiles(imgFltr);
-                imgName = imgFiles(imgFltr);
-                imgIDs = regexp(imgName, '_', 'split');
+                tempT(2:end,1) = fullfile({imgFiles(imgFltr).folder}, {imgFiles(imgFltr).name});
+                tempT(2:end,2) = cellfun(@(x) x(1:end-4), {imgFiles(imgFltr).name}, 'UniformOutput', false);
+                imgIDs = nameParts(imgFltr);
                 for i = 1:numel(imgFltr)
                     waitbar(i/numel(imgFltr), hWait, sprintf('Loading movie data %0.2f%%', i/numel(imgFltr)*100));
                     tempT{i+1,3} = weeknum(datetime(imgIDs{i}{1}, 'InputFormat', 'yyMMdd'));
@@ -1096,7 +1198,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                         tempT{i+1,7} = [imgIDs{i}{1} '_' imgIDs{i}{3}]; % use to link the DIC to the movies
                     end
                     % get the imaging period (T) and frequency (Fs) from the file
-                    imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
+                    imgInfo = imfinfo(fullfile(imgFiles(imgFltr(i)).folder, imgFiles(imgFltr(i)).name));
                     switch app.options.Microscope
                         case 'Nikon A1'
                             T = imgInfo(1).ImageDescription;
@@ -1106,7 +1208,6 @@ classdef networkActivityApp < matlab.apps.AppBase
                                 T = 1/(app.options.Frequency);
                             end
                         case 'Others'
-                            imgInfo = imfinfo(app.imgDatastore.Files{imgFltr(i)});
                             if app.options.Frequency > 0
                                 T = 1/(app.options.Frequency);
                             else
@@ -1143,34 +1244,33 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.LastPath = filePath;
                 togglePointer(app)
                 networkFiles = load(fullfile(filePath, fileName));
-                if isfield(networkFiles, 'imgStore')
-                    if ~isfile(networkFiles.imgStore.Files(1))
-                        % Files are re-located
-                        newPath = uigetdir(app.options.LastPath, 'Relocate files');
-                        networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif'});
-                        for ii = 1:size(networkFiles.dicT,1)
-                            [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
-                            %networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
-                            networkFiles.dicT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
-                        end
-                        for ii = 1:size(networkFiles.imgT,1)
-                            [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
-                            %networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
-                            networkFiles.imgT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
-                        end
-                        %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
-                        %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
-                        %networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
-                    end
-                    if isempty(app.imgDatastore)
-                        app.imgDatastore = networkFiles.imgStore;
-                    else
-                        oldImgPath = unique(cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false));
-                        allImgPaths = [oldImgPath; fileparts(networkFiles.imgStore.Files{1})];
-                        app.imgDatastore = imageDatastore(allImgPaths);
-                    end
-                    app.ToggleViewStack.Enable = 'on';
-                end
+%                 if isfield(networkFiles, 'imgStore')
+%                     if ~isfile(networkFiles.imgStore.Files(1))
+%                         % Files are re-located
+%                         newPath = uigetdir(app.options.LastPath, 'Relocate files');
+%                         networkFiles.imgStore = imageDatastore(newPath, 'FileExtensions', {'.tif'});
+%                         for ii = 1:size(networkFiles.dicT,1)
+%                             [~,imgName,imgExt] = fileparts(networkFiles.dicT.Filename{ii});
+%                             %networkFiles.dicT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+%                             networkFiles.dicT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
+%                         end
+%                         for ii = 1:size(networkFiles.imgT,1)
+%                             [~,imgName,imgExt] = fileparts(networkFiles.imgT.Filename{ii});
+%                             %networkFiles.imgT.Filename(ii) = fullfile(networkFiles.imgStore.Folders, [imgName, imgExt]);
+%                             networkFiles.imgT.Filename(ii) = networkFiles.imgStore.Files(contains(networkFiles.imgStore.Files, imgName));
+%                         end
+%                         %dicFltr = contains(networkFiles.imgStore.Files, app.options.StillName);
+%                         %networkFiles.dicT.Filename = networkFiles.imgStore.Files(dicFltr);
+%                         %networkFiles.imgT.Filename = networkFiles.imgStore.Files(~dicFltr);
+%                     end
+%                     if isempty(app.imgDatastore)
+%                         app.imgDatastore = networkFiles.imgStore;
+%                     else
+%                         oldImgPath = unique(cellfun(@fileparts, app.imgDatastore.Files, 'UniformOutput', false));
+%                         allImgPaths = [oldImgPath; fileparts(networkFiles.imgStore.Files{1})];
+%                         app.imgDatastore = imageDatastore(allImgPaths);
+%                     end
+%                 end
                 if isfield(networkFiles, 'dicT')
                     if isempty(app.dicT)
                         app.dicT = networkFiles.dicT;
@@ -1194,19 +1294,20 @@ classdef networkActivityApp < matlab.apps.AppBase
                         app.imgT = [app.imgT; networkFiles.imgT];
                     end
                     app.AnalysisMenu.Enable = true;
+                    app.ToggleViewStack.Enable = 'on';
                 end
                 if isfield(networkFiles, 'fullT')
                     app.fullT = networkFiles.fullT;
                 end
                 if isfield(networkFiles, 'dicT') && isfield(networkFiles, 'imgT')
-                    if ~isempty(app.imgT.SpikeLocations{1})
-                        app.RadioSingleTrace.Enable = 'on';
-                        app.RadioAllMean.Enable = 'on';
-                        app.PlotMenu.Enable = 'on';
-                        app.curDIC = app.dicT.CellID{1};
-                        if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
-                            detrendData(app)
-                        end
+                    app.RadioSingleTrace.Enable = 'on';
+                    app.RadioAllMean.Enable = 'on';
+                    app.PlotMenu.Enable = 'on';
+                    app.CellNumberText.Enable = 'on';
+                    app.FileMenuExport.Enable = 'on';
+                    app.curDIC = app.dicT.CellID{1};
+                    if ~strcmp('DetrendData',app.imgT.Properties.VariableNames)
+                        detrendData(app)
                     end
                     updateDIC(app, true)
                 else
@@ -1227,19 +1328,59 @@ classdef networkActivityApp < matlab.apps.AppBase
             savePath = fullfile(filePath, fileName);
             dicT = app.dicT;
             imgT = app.imgT;
-            imgStore = app.imgDatastore;
+%             imgStore = app.imgDatastore;
             fullT = app.fullT;
-            save(savePath, 'dicT', 'imgT', 'imgStore', 'fullT');
+            save(savePath, 'dicT', 'imgT', 'fullT');
             cd(oldDir)
         end
         
         function FileMenuExportSelected(app, event)
-            [fileName, filePath] = uiputfile('*.mat', 'Save network data');
-            savePath = fullfile(filePath, fileName);
-            dicT = app.dicT;
+            % Ask what needs to be saved
+            whatExport = questdlg('What would you like to export?', 'Export as csv', 'Analysis', 'Traces', 'Both', 'Analysis');
             imgT = app.imgT;
-            imgStore = app.imgDatastore;
-            fullT = app.fullT;
+            imgT.ImgProperties = imgT.ImgProperties(:,4);
+            imgT.Properties.VariableNames{8} = 'Fs';
+            imgT = imgT(:, [2:8 17 21 31:53]);
+            switch whatExport
+                case 'Analysis'
+                    [fileName, filePath] = uiputfile('*.csv', 'Export network data');
+                    writetable(imgT, fullfile(filePath, fileName));
+                case 'Traces'
+                    [fileName, filePath] = uiputfile('*.xlsx', 'Export network traces');
+                    hWait = waitbar(0, 'Exporting data');
+                    nSheet = size(app.imgT, 1);
+                    allRaw = app.imgT.RawIntensity;
+                    allFF0 = app.imgT.FF0Intensity;
+                    allCellID = app.imgT.CellID;
+                    %timeEst = 1;
+                    for s = 1:nSheet
+                        tic;
+                        waitbar(s/nSheet, hWait, sprintf('Exporting data (~%.2f s)', timeEst*(nSheet-s)));
+                        writematrix(allRaw{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', allCellID{s});
+                        writematrix(allFF0{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', allCellID{s});
+                        timeEst = toc;
+                    end
+                    close(hWait)
+                otherwise
+                    [fileName, filePath] = uiputfile('*.csv', 'Export network data');
+                    writetable(imgT, fullfile(filePath, fileName));
+                    fileName = regexprep(fileName, 'csv', 'xlsx');
+                    hWait = waitbar(0, 'Exporting data');
+                    nSheet = size(app.imgT, 1);
+                    allRaw = app.imgT.RawIntensity;
+                    allFF0 = app.imgT.FF0Intensity;
+                    allCellID = app.imgT.CellID;
+                    %timeEst = 1;
+                    for s = 1:nSheet
+                        tic;
+                        waitbar(s/nSheet, hWait, sprintf('Exporting data (~%.2f s)', timeEst*(nSheet-s)));
+                        writematrix(allRaw{s}, fullfile(filePath, sprintf('Raw_%s', fileName)), 'Sheet', allCellID{s});
+                        writematrix(allFF0{s}, fullfile(filePath, sprintf('FF0_%s', fileName)), 'Sheet', allCellID{s});
+                        timeEst = toc;
+                    end
+                    close(hWait)
+            end
+            
             
         end
         
@@ -1336,6 +1477,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.TogglePeakAdd.Enable = 'on';
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
+            app.CellNumberText.Enable = 'on';
         end
         
         function AnalysisMenuQuantifySelected(app, event)
@@ -1357,33 +1499,38 @@ classdef networkActivityApp < matlab.apps.AppBase
             % Add the median per spike, consider that not all cells are quantified yet
             for isi = 1:size(app.imgT,1)
                 if ~isempty(app.imgT.SpikeIntensities{isi})
-                    app.imgT.MedianInt(isi) = nanmedian(cellfun(@nanmedian, app.imgT.SpikeIntensities{isi}));
-                    app.imgT.MedianFWHM(isi) = nanmedian(cellfun(@nanmedian, app.imgT.SpikeWidths{isi}));
-                    app.imgT.MedianISI(isi) = nanmedian(cellfun(@nanmedian, app.imgT.InterSpikeInterval{isi}));
-                    app.imgT.MeanInt(isi) = nanmean(cellfun(@nanmean, app.imgT.SpikeIntensities{isi}));
-                    app.imgT.MeanFWHM(isi) = nanmean(cellfun(@nanmean, app.imgT.SpikeWidths{isi}));
+                    % Suprathreshold
+                    app.imgT.MeanInt(isi) = nanmean(cellfun(@(x,y) nanmean(x(~y)), app.imgT.SpikeIntensities{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanFWHM(isi) = nanmean(cellfun(@(x,y) nanmean(x(~y)), app.imgT.SpikeWidths{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanRiseTime(isi) = nanmean(cellfun(@(x,y) nanmean(x(~y)), app.imgT.CellRiseTime{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanDecayTau(isi) = nanmean(cellfun(@(x,y) nanmean(x(~y)), app.imgT.CellDecayTau{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianInt(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(~y)), app.imgT.SpikeIntensities{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianFWHM(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(~y)), app.imgT.SpikeWidths{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianRiseTime(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(~y)), app.imgT.CellRiseTime{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianDecayTau(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(~y)), app.imgT.CellDecayTau{isi}, app.imgT.SubthresholdFltr{isi}));
+                    % Subthreshold
+                    app.imgT.MeanSubInt(isi) = nanmean(cellfun(@(x,y) nanmean(x(y)), app.imgT.SpikeIntensities{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanSubFWHM(isi) = nanmean(cellfun(@(x,y) nanmean(x(y)), app.imgT.SpikeWidths{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanSubRiseTime(isi) = nanmean(cellfun(@(x,y) nanmean(x(y)), app.imgT.CellRiseTime{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MeanSubDecayTau(isi) = nanmean(cellfun(@(x,y) nanmean(x(y)), app.imgT.CellDecayTau{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianSubInt(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(y)), app.imgT.SpikeIntensities{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianSubFWHM(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(y)), app.imgT.SpikeWidths{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianSubRiseTime(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(y)), app.imgT.CellRiseTime{isi}, app.imgT.SubthresholdFltr{isi}));
+                    app.imgT.MedianSubDecayTau(isi) = nanmedian(cellfun(@(x,y) nanmedian(x(y)), app.imgT.CellDecayTau{isi}, app.imgT.SubthresholdFltr{isi}));
+                    % Interspike interval parameters
                     app.imgT.MeanISI(isi) = nanmean(cellfun(@nanmean, app.imgT.InterSpikeInterval{isi}));
-                    app.imgT.MeanRiseTime(isi) = nanmean(cellfun(@nanmean, app.imgT.CellRiseTime{isi}));
-                    app.imgT.MedianRiseTime(isi) = nanmedian(cellfun(@nanmedian, app.imgT.CellRiseTime{isi}));
-                    app.imgT.MeanDecayTau(isi) = nanmean(cellfun(@nanmean, app.imgT.CellDecayTau{isi}));
-                    app.imgT.MedianDecayTau(isi) = nanmedian(cellfun(@nanmedian, app.imgT.CellDecayTau{isi}));
-                    app.imgT.NewMedianFWHM(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewDuration{isi}));
-                    app.imgT.NewMeanFWHM(isi) = nanmean(cellfun(@nanmean, app.imgT.NewDuration{isi}));
-                    app.imgT.NewMedianInt(isi) = nanmedian(cellfun(@nanmedian, app.imgT.NewSpikePeak{isi}));
-                    app.imgT.NewMeanInt(isi) = nanmean(cellfun(@nanmean, app.imgT.NewSpikePeak{isi}));
+                    app.imgT.MedianISI(isi) = nanmedian(cellfun(@nanmedian, app.imgT.InterSpikeInterval{isi}));
                 end
             end
+            app.imgT.ISICoV = cellfun(@nanmean, app.imgT.InterSpikeIntervalCoV);
             % For the Gaussian fit
-            app.imgT.MeanFreq = cellfun(@mean, app.imgT.CellFrequency);
-            app.imgT.MedianFreq = cellfun(@median, app.imgT.CellFrequency);
+            app.imgT.MeanFreq = cellfun(@nanmean, app.imgT.CellFrequency);
+            app.imgT.MedianFreq = cellfun(@nanmedian, app.imgT.CellFrequency);
             app.imgT.nCell = cellfun(@(x) size(x,1), app.imgT.RawIntensity);
             app.imgT.nCell = round(app.imgT.nCell .* app.imgT.Participation / 100);
-            app.imgT.PeakParticipation = cellfun(@mean, app.imgT.NetworkPeaksGauss) ./ app.imgT.nCell * 100;
-            app.imgT.MedianNetworkFWHM = cellfun(@nanmedian, app.imgT.NetworkFWHMGauss);
-            app.imgT.MedianNetworkISI = cellfun(@(x) nanmedian(diff(x)), app.imgT.NetworkLocsGauss);
-            app.imgT.MeanNetworkFWHM = cellfun(@nanmean, app.imgT.NetworkFWHMGauss);
-            app.imgT.MeanNetworkISI = cellfun(@(x) nanmean(diff(x)), app.imgT.NetworkLocsGauss);
+            app.imgT.PeakParticipation = cellfun(@nanmean, app.imgT.NetworkPeaks) ./ app.imgT.nCell * 100;
             app.PlotMenu.Enable = 'on';
+            app.FileMenuExport.Enable = 'on';
         end
         
         function AnalysisMenuReCalculateSelected(app, event)
@@ -1425,30 +1572,35 @@ classdef networkActivityApp < matlab.apps.AppBase
                 createStackMovie(app);
             else
                 togglePointer(app)
-                imgFile = app.imgDatastore.Files{contains(app.imgDatastore.Files, app.curStak)};
-                imgTif = imread(imgFile);
+                imgFile = app.imgT.Filename{contains(app.imgT.Filename, app.curStak)};
                 [~, fileName] = fileparts(imgFile);
-                fileFltr = find(contains(app.imgT.CellID, fileName));
-                if ~contains(fileName, app.options.Reference) && app.options.Registration
-                    if any(strcmp('RegEst', app.imgT.Properties.VariableNames))
-                        if isempty(cell2mat(app.imgT{fileFltr, 'RegEst'}))
-                            tyrFile = app.imgT{find(contains(app.imgT{1:fileFltr,'CellID'}, 'Tyrode'),1,'last'),'Filename'};
-                            imgTyr = imread(cell2mat(tyrFile));
-                            imgOut = imref2d(size(imgTyr));
-                            tformEstimate = imregcorr(imgTif, imgTyr, 'translation');
-                            app.imgT{fileFltr,'RegEst'} = {tformEstimate.T};
-                        else
-                            tformEstimate = affine2d(cell2mat(app.imgT{fileFltr,'RegEst'}));
-                            imgOut = imref2d(size(imgTif));
+                if isfile(imgFile)
+                    imgTif = imread(imgFile);
+                    fileFltr = find(contains(app.imgT.CellID, fileName));
+                    if ~contains(fileName, app.options.Reference) && app.options.Registration
+                        if any(strcmp('RegEst', app.imgT.Properties.VariableNames))
+                            if isempty(cell2mat(app.imgT{fileFltr, 'RegEst'}))
+                                tyrFile = app.imgT{find(contains(app.imgT{1:fileFltr,'CellID'}, 'Tyrode'),1,'last'),'Filename'};
+                                imgTyr = imread(cell2mat(tyrFile));
+                                imgOut = imref2d(size(imgTyr));
+                                tformEstimate = imregcorr(imgTif, imgTyr, 'translation');
+                                app.imgT{fileFltr,'RegEst'} = {tformEstimate.T};
+                            else
+                                tformEstimate = affine2d(cell2mat(app.imgT{fileFltr,'RegEst'}));
+                                imgOut = imref2d(size(imgTif));
+                            end
                         end
+                        imgTif = imwarp(imgTif, tformEstimate, 'OutputView', imgOut);
                     end
-                    imgTif = imwarp(imgTif, tformEstimate, 'OutputView', imgOut);
+                    app.minMax.Stack = stretchlim(imgTif,[0 .999]);
+                    app.hStack = imshow(imadjust(imgTif, app.minMax.Stack), 'Parent', app.AxesStack);
+                    app.movieData = [];
+                    app.curSlice = [];
+                    app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
+                else
+                    app.AxesStack.Title.String = sprintf('File %s not found', regexprep(app.curStak, '_', ' '));
+                    app.AxesStack.Visible = 'on';
                 end
-                app.minMax.Stack = stretchlim(imgTif,[0 .999]);
-                app.hStack = imshow(imadjust(imgTif, app.minMax.Stack), 'Parent', app.AxesStack);
-                app.movieData = [];
-                app.curSlice = [];
-                app.AxesStack.Title.String = regexprep(app.curStak, '_', ' ');
                 togglePointer(app)
             end
             warning('on', 'all')
@@ -1463,7 +1615,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             switch event.NewValue.String
                 case 'Single traces'
                     app.CellNumberMinor.Enable = 'on';
-                    app.CellNumberText.Enable = 'off';
+                    app.CellNumberText.Enable = 'on';
                     app.CellNumberPlus.Enable = 'on';
                     if ~isempty(app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)})
                         app.TogglePeakAdd.Enable = 'on';
@@ -1476,6 +1628,15 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.TogglePeakAdd.Enable = 'off';
                     app.TogglePeakRemove.Enable = 'off';
             end
+            togglePointer(app)
+            updatePlot(app)
+            togglePointer(app)
+        end
+        
+        function CellNumberEntered(app, event)
+            oldCell = app.curCell(1);
+            app.curCell = str2double(app.CellNumberText.String);
+            app.curCell(2) = oldCell;
             togglePointer(app)
             updatePlot(app)
             togglePointer(app)
@@ -1531,6 +1692,14 @@ classdef networkActivityApp < matlab.apps.AppBase
         function ToggleViewStackPressed(app, event)
             if app.ToggleViewStack.Value == 1
                 if isempty(app.movieData) || ~matches(app.AxesStack.Title.String, regexprep(app.curStak, '_', ' '))
+                    if ~isfile(app.imgT.Filename(1))
+                        % Files are re-located
+                        newPath = uigetdir(app.options.LastPath, 'Relocate files');
+                        dicFiles = fullfile(newPath, {app.dicT.CellID{:}})';
+                        app.dicT.Filename = cellfun(@(x) sprintf('%s.tif', x), dicFiles, 'UniformOutput', false);
+                        imgFiles = fullfile(newPath, {app.imgT.CellID{:}})';
+                        app.imgT.Filename = cellfun(@(x) sprintf('%s.tif', x), imgFiles, 'UniformOutput', false);
+                    end
                     togglePointer(app)
                     app.ToggleViewStack.BackgroundColor = 'white';
                     createStackMovie(app)
@@ -1570,6 +1739,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                     if numel(delPeak) > 1
                         % Narrow down to 2 frames
                         delPeak = find(spikeData > pointX-2/Fs & spikeData < pointX+2/Fs);
+                        if numel(delPeak) > 1
+                            % Get the first one in the list
+                            delPeak = delPeak(1);
+                        end
                     end
                 end
                 if numel(delPeak) > 1
@@ -1616,7 +1789,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             trace = cell2mat(app.imgT{imgFltr, 'DetrendData'});
             trace = trace(cellFltr,:);
             smoothTrace = wdenoise(trace, 'DenoisingMethod', 'BlockJS');
-            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) /2;
+            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) / 2;
             spikeLeng = halfDuration / Fs;
             switch app.options.DetectTrace
                 case 'Raw'
@@ -1637,21 +1810,36 @@ classdef networkActivityApp < matlab.apps.AppBase
                     tempSpikeData(2,tS-1) = [];
                     tempSpikeData(3,tS-1) = [];
                 else
-                if strcmpi(sel, 'alt')
-                    break
-                end
-                if isempty(pointX)
-                    tempSpikeData = nan;
-                    break
-                end
-                pointF = round(round(pointX) * Fs);
-                [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
-                    'SortStr', 'descend');
-                tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
-                tempSpikeData(2,tS) = tempInts(1);
-                tempSpikeData(3,tS) = tempWidths(1);
-                plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
-                tS = tS + 1;
+                    if strcmpi(sel, 'alt')
+                        break
+                    end
+                    if isempty(pointX)
+                        tempSpikeData = nan;
+                        break
+                    end
+                    pointF = round(round(pointX) * Fs);
+                    [tempInts, tempLocs, tempWidths] = findpeaks(detectTrace(pointF-halfDuration:pointF+halfDuration),...
+                        'SortStr', 'descend');
+                    tempSpikeData(1,tS) = (pointF-halfDuration+tempLocs(1)-2) / Fs;
+                    % Check to see that the new spike is at least as far as the minimum distance
+                    fltr1 = (tempSpikeData(1,tS)-app.options.PeakMinDistance) < spikeData(1,:);
+                    fltr2 = spikeData(1, fltr1) <= tempSpikeData(1,tS);
+                    if any(fltr2)
+                        hErr = errordlg('Spike already selected!');
+                        waitfor(hErr);
+                        tempSpikeData(:,tS) = [];
+                    else
+                        if any(tempSpikeData(1,1:tS-1)==tempSpikeData(1,tS))
+                            hErr = errordlg('Spike already selected!');
+                            waitfor(hErr);
+                            tempSpikeData(:,tS) = [];
+                        else
+                            tempSpikeData(2,tS) = tempInts(1);
+                            tempSpikeData(3,tS) = tempWidths(1);
+                            plot(app.AxesPlot, tempSpikeData(1,tS), tempSpikeData(2,tS), 'og', 'LineWidth', 1.5)
+                            tS = tS + 1;
+                        end
+                    end
                 end
             end
             % Add the data to the table and sort in order of event
@@ -1777,7 +1965,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Visible', 'off');
             app.manualReg = uicontrol(app.Figure, 'Style', 'pushbutton', 'Units', 'pixels',...
                 'Position', [550 810 80 20], 'String', 'Registration',...
-                'Visible', 'on', 'Callback', createCallbackFcn(app, @manualRegistrationPressed, true));
+                'Visible', 'off', 'Callback', createCallbackFcn(app, @manualRegistrationPressed, true));
             app.AxesStack.Title.String = 'Ca^{2+} Movie';
             app.SliderImageStack = uicontrol(app.Figure, 'Style', 'slider',...
                 'Units', 'pixels', 'Position', [550 385 400 20],...
@@ -1816,7 +2004,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Position', [1000 235 110 30], 'FontSize', 12);
             app.CellNumberText = uicontrol(app.Figure, 'Style', 'edit',...
                 'String', '1', 'Units', 'pixels', 'Position', [1050 215 50 30],...
-                'FontSize', 12, 'Enable', 'off');
+                'FontSize', 12, 'Enable', 'off',...
+                'Callback', createCallbackFcn(app, @CellNumberEntered, true));
             app.CellNumberPlus = uicontrol(app.Figure, 'Style', 'pushbutton',...
                 'String', 'Next', 'Units', 'pixels', 'Position', [1100 215 50 30],...
                 'FontSize', 12, 'Enable', 'off',...
@@ -1964,6 +2153,11 @@ classdef networkActivityApp < matlab.apps.AppBase
                     detrendData(app)
                     updatePlot(app);
                 end
+                if app.options.Registration
+                    app.manualReg.Visible = 'on';
+                else
+                    app.manualReg.Visible = 'off';
+                end
             end
             function resetOptionPressed(app, event)
                 app.options.StillName = 'DIC.';
@@ -1994,7 +2188,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Name', 'Relable condition', 'ToolBar', 'none', 'MenuBar', 'none',...
                 'NumberTitle', 'off');
             hList = uicontrol('Style', 'listbox', 'Position', [20 80 200 400],...
-                'Min', 0, 'Max', 2, 'String', cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false));
+                'Min', 0, 'Max', 2, 'String', cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, string(app.imgT.Condition), 'UniformOutput', false));
             hRadioButton = uibuttongroup('Title', 'Label to change',...
                 'Units', 'pixels', 'Position', [230 409 160 80],...
                 'FontSize', 11);
@@ -2017,8 +2211,17 @@ classdef networkActivityApp < matlab.apps.AppBase
                     case 'Recording'
                         app.imgT.RecID(nameIdx) = {newLabel};
                 end
-                hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, app.imgT.Condition, 'UniformOutput', false);
+                hList.String = cellfun(@(x,y) strjoin({x,y}, ' - '), app.imgT.CellID, string(app.imgT.Condition), 'UniformOutput', false);
             end
+            waitfor(labelFigure);
+            % ask the user to order the conditions
+            uniCond = string(unique(app.imgT.Condition));
+            promptCond = 'Enter space-separated number for conditions: ';
+            for c=1:numel(uniCond)
+                promptCond = sprintf('%s, %s', promptCond, uniCond{c});
+            end
+            condOrd = inputdlg(promptCond, 'Order conditions');
+            app.options.ConditionOrder = condOrd;
         end
     end
     
