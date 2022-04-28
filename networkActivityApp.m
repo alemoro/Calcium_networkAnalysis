@@ -45,6 +45,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         CellNumberMinor
         TogglePeakAdd
         TogglePeakRemove
+        ToggleFixAxis
     end
     
     % File storage properties
@@ -66,6 +67,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         curSlice % The timelapse slice that is visible
         curTime % a line for the current position on the plot
         options % Store the options
+        YMinMax % Store the minimum and maximum value of the Y axis in this FOV
     end
     
     % Interaction methods
@@ -786,6 +788,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                 showMaskDIC(app, app.cellsMask, oldCell)
             end
             app.AxesPlot.XLim = [time(1) time(end)];
+            if app.ToggleFixAxis.Value
+                app.AxesPlot.YLim = app.YMinMax;
+            end
             app.AxesPlot.Title.String = 'Ca^{2+} Traces';
             app.AxesPlot.YLabel.String = '\DeltaF/F_0';
             app.AxesPlot.XLabel.String = 'Time (s)';
@@ -1564,9 +1569,16 @@ classdef networkActivityApp < matlab.apps.AppBase
         
         function ListImagesChange(app, event)
             warning('off', 'all')
-            [~, curStack] = fileparts(app.imgT.Filename{strcmp(app.imgT.CellID,app.ListImages.String{app.ListImages.Value})});
+            if numel(app.ListImages.String) < app.ListImages.Value
+                app.ListImages.Value = 1;
+            end
             app.curStak = app.ListImages.String{app.ListImages.Value};
             togglePointer(app)
+            imgID = contains(app.imgT.Filename, app.curStak);
+            tempData = app.imgT.DetrendData{imgID};
+            yMin = min(tempData, [], 'all');
+            yMax = max(tempData, [], 'all');
+            app.YMinMax = [yMin, yMax];
             updatePlot(app)
             if app.ToggleViewStack.Value == 1
                 createStackMovie(app);
@@ -1617,6 +1629,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.CellNumberMinor.Enable = 'on';
                     app.CellNumberText.Enable = 'on';
                     app.CellNumberPlus.Enable = 'on';
+                    app.ToggleFixAxis.Enable = 'on';
                     if ~isempty(app.imgT.SpikeLocations{contains(app.imgT.CellID, app.curStak)})
                         app.TogglePeakAdd.Enable = 'on';
                         app.TogglePeakRemove.Enable = 'on';
@@ -1627,6 +1640,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     app.CellNumberPlus.Enable = 'off';
                     app.TogglePeakAdd.Enable = 'off';
                     app.TogglePeakRemove.Enable = 'off';
+                    app.ToggleFixAxis.Enable = 'off';
             end
             togglePointer(app)
             updatePlot(app)
@@ -1789,7 +1803,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             trace = cell2mat(app.imgT{imgFltr, 'DetrendData'});
             trace = trace(cellFltr,:);
             smoothTrace = wdenoise(trace, 'DenoisingMethod', 'BlockJS');
-            halfDuration = (app.options.PeakMinDuration + app.options.PeakMaxDuration) / 2;
+            halfDuration = round((app.options.PeakMinDuration + app.options.PeakMaxDuration) / 2);
             spikeLeng = halfDuration / Fs;
             switch app.options.DetectTrace
                 case 'Raw'
@@ -1853,6 +1867,24 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.imgT{imgFltr, 'SpikeWidths'}{1}{cellFltr} = sortedData(3,:);
             end
             updatePlot(app);
+        end
+        
+        function ToggleFixAxisPress(app, event)
+            if isempty(app.YMinMax)
+                imgID = contains(app.imgT.Filename, app.curStak);
+                tempData = app.imgT.DetrendData{imgID};
+                yMin = min(tempData, [], 'all');
+                yMax = max(tempData, [], 'all');
+                app.YMinMax = [yMin, yMax];
+            end
+            if app.ToggleFixAxis.Value
+                app.AxesPlot.YLim = app.YMinMax;
+                app.ToggleFixAxis.BackgroundColor = [0 .47 .84];
+            else
+                app.AxesPlot.YLimMode = 'auto';
+                app.ToggleFixAxis.BackgroundColor = [.94 .94 .94];
+            end
+                
         end
         
         function keyPressed(app, event)
@@ -2022,6 +2054,10 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'String', 'Remove peaks', 'Units', 'pixels', 'Position', [1000 135 110 30],...
                 'FontSize', 12, 'Enable', 'off',...
                 'Callback', createCallbackFcn(app, @TogglePeakRemovePress, true));
+            app.ToggleFixAxis = uicontrol(app.Figure, 'Style', 'togglebutton',...
+                'String', 'Fix Y Axis', 'Units', 'pixels', 'Position', [1000 95 110 30],...
+                'FontSize', 13, 'Enable', 'off',...
+                'Callback', createCallbackFcn(app, @ToggleFixAxisPress, true));
             % Set the figure to visible
             nUI = fieldnames(app);
             for ui = 1:numel(nUI)
