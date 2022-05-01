@@ -22,6 +22,9 @@ classdef networkActivityApp < matlab.apps.AppBase
         AnalysisMenuReCalculate
         PlotMenu
         PlotMenuRaster
+        PlotMenuRasterAll
+        PlotMenuRasterSpike
+        PlotMenuRasterTrace
         PlotMenuOverview
         PlotMenuTimeFrequency
         OptionMenu
@@ -1552,13 +1555,58 @@ classdef networkActivityApp < matlab.apps.AppBase
         end
         
         function PlotRasterSelected(app, event)
+            bTrace = false;
             imgID = contains(app.imgT.CellID, app.curStak);
             Fs = app.imgT.ImgProperties(imgID,4);
-            tempRaster = app.imgT.SpikeRaster{imgID};
             netRaster = app.imgT.NetworkRaster{imgID};
-            nFrames = size(tempRaster,2);
+            nFrames = size(netRaster,2);
             time = (0:nFrames-1)/Fs;
-            rasterPlot(app, time, tempRaster, netRaster)
+            switch event.Source.Text
+                case 'Event duration'
+                    tempRaster = app.imgT.SpikeRaster{imgID};
+                case 'Spike Locations'
+                    tempLocs = app.imgT.SpikeLocations{imgID};
+                    % Create the raster plot
+                    nCell = size(tempLocs, 1);
+                    tempRaster = nan(nCell, nFrames);
+                    for c = 1:nCell
+                        sStart = ceil(tempLocs{c} * Fs);
+                        if ~isempty(sStart)
+                            for s = 1:length(sStart)
+                                tempRaster(c,sStart(s)-2:sStart(s)+2) = c;
+                            end
+                        end
+                    end
+                case 'Traces'
+                    bTrace = true;
+                    tempRaster = app.imgT.DetrendData{imgID};
+                    cellSpace = max(tempRaster,[],'all') / 3;
+                    cellNum = (1:size(tempRaster,1)) * cellSpace;
+                    tempRaster = (tempRaster + repmat(cellNum',1,size(tempRaster,2)))';
+            end
+            % Actual plot
+            figure()
+            rAx = axes();
+            hold on
+            if bTrace
+                plot(rAx, time, tempRaster, 'k')
+                yMin = round(min(tempRaster,[],'all'), 2, 'significant');
+                yMax = round(max(tempRaster,[],'all'), 2, 'significant');
+                rAx.YLim = [yMin, yMax];
+                rAx.YTick = linspace(yMin+cellSpace, yMax-cellSpace, size(tempRaster,2));
+                rAx.YTickLabel = 1:size(tempRaster,2);
+            else
+                area(rAx, time, netRaster, 'EdgeColor', 'none', 'FaceColor', 'k', 'FaceAlpha', .3)
+                plot(rAx, time, tempRaster, 'k', 'LineWidth', 2)
+                plot(rAx, [time(1) time(end)], ones(2,1) * sum(any(~isnan(tempRaster), 2)) * 0.8, 'r')
+                rAx.YLim = [0, size(tempRaster,1)];
+                rAx.YTick = 1:size(tempRaster,1);
+            end
+            rAx.Box = 'off';
+            rAx.TickDir = 'out';
+            rAx.YLabel.String = 'Cell number';
+            rAx.XLabel.String = 'Time (s)';
+            rAx.Title.String = regexprep(app.curStak, '_', ' ');
         end
         
         function OptionDebugSelected(app, event)
@@ -1947,7 +1995,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'NumberTitle', 'off', 'WindowScrollWheelFcn', @(~,event)SliderImageStackMoved(app, event),...
                 'KeyPressFcn', @(~,event)keyPressed(app, event));
             movegui(app.Figure, 'center');
-            % Create the menu bar
+            % Create the menu bar: file options
             app.FileMenu = uimenu(app.Figure, 'Text', 'File');
             app.FileMenuOpen = uimenu(app.FileMenu, 'Text', 'Load new data',...
                 'MenuSelectedFcn', createCallbackFcn(app, @FileMenuOpenSelected, true));
@@ -1960,6 +2008,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.FileMenuExport = uimenu(app.FileMenu, 'Text', 'Export',...
                 'MenuSelectedFcn', createCallbackFcn(app, @FileMenuExportSelected, true),...
                 'Enable', 'off');
+            % DIC menu
             app.DicMenu = uimenu(app.Figure, 'Text', 'DIC Menu', 'Enable', 'off');
             app.DicMenuPlaceRoi = uimenu(app.DicMenu, 'Text', 'Place ROIs',...
                 'MenuSelectedFcn', createCallbackFcn(app, @DicMenuPlaceRoiSelected, true));
@@ -1967,6 +2016,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'MenuSelectedFcn', createCallbackFcn(app, @DicMenuRemoveRoiSelected, true));
             app.DicMenuSelect = uimenu(app.DicMenu, 'Text', 'Select Image', 'Separator', 'on',...
                 'MenuSelectedFcn', createCallbackFcn(app, @DicMenuSelectSelected, true));
+            % Analysis menu
             app.AnalysisMenu = uimenu(app.Figure, 'Text', 'Analysis', 'Enable', 'off');
             app.AnalysisMenuDetect = uimenu(app.AnalysisMenu, 'Text', 'Detect Events',...
                 'MenuSelectedFcn', createCallbackFcn(app, @AnalysisMenuDetectSelected, true));
@@ -1974,13 +2024,20 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'MenuSelectedFcn', createCallbackFcn(app, @AnalysisMenuQuantifySelected, true));
             app.AnalysisMenuReCalculate = uimenu(app.AnalysisMenu, 'Text', 'Re-calculate traces',...
                 'Separator', 'on', 'MenuSelectedFcn', createCallbackFcn(app, @AnalysisMenuReCalculateSelected, true));
+            % Plot menu
             app.PlotMenu = uimenu(app.Figure, 'Text', 'Plot', 'Enable', 'off');
-            app.PlotMenuRaster = uimenu(app.PlotMenu, 'Text', 'Raster Plot',...
+            app.PlotMenuRaster = uimenu(app.PlotMenu, 'Text', 'Raster Plot', 'Enable', 'on');
+            app.PlotMenuRasterAll = uimenu(app.PlotMenuRaster, 'Text', 'Event duration',...
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
+            app.PlotMenuRasterSpike = uimenu(app.PlotMenuRaster, 'Text', 'Spike Locations',...
+                'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
+            app.PlotMenuRasterTrace = uimenu(app.PlotMenuRaster, 'Text', 'Traces',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotRasterSelected, true), 'Enable', 'on');
             app.PlotMenuOverview = uimenu(app.PlotMenu, 'Text', 'Plot overview',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotOverviewSelected, true), 'Enable', 'on');
             app.PlotMenuTimeFrequency = uimenu(app.PlotMenu, 'Text', 'ISI over time',...
                 'MenuSelectedFcn', createCallbackFcn(app, @PlotTimeFrequencySelected, true), 'Enable', 'on');
+            % Option menu
             app.OptionMenu = uimenu(app.Figure, 'Text', 'Options');
             app.OptionMenuSettings = uimenu(app.OptionMenu, 'Text', 'Settings',...
                 'MenuSelectedFcn', createCallbackFcn(app, @OptionMenuSelected, true), 'Enable', 'on');
