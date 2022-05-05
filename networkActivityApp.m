@@ -39,6 +39,12 @@ classdef networkActivityApp < matlab.apps.AppBase
         SliderImageStack
         ListImagesLabel
         ListImages
+        ButtonAnalysis
+        RadioSpikesAll
+        RadioSpikesCurrent
+        RadioSpikesSelected
+        PushAnalysis
+        PushQuantify
         ButtonPlot
         RadioAllMean
         RadioSingleTrace
@@ -71,6 +77,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         curTime % a line for the current position on the plot
         options % Store the options
         YMinMax % Store the minimum and maximum value of the Y axis in this FOV
+        bSave % Toggle if there is new data that need to be saved
     end
     
     % Interaction methods
@@ -579,7 +586,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             end
             % Calculate and keep track of subthreshold spikes (as for now defined as promininence < 0.2 a.u.)
-            subFltr = cellfun(@(x) x<=0.2, spikePeak, 'UniformOutput', false);
+            subFltr = cellfun(@(x) x<=0.01, spikePeak, 'UniformOutput', false);
             subRatio = cellfun(@(x) sum(x)/numel(x), subFltr);
             % Calculate if there are bursts
             
@@ -945,6 +952,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             nRec = numel(recID);
             % Get the replicas
             batchList = app.imgT.Week;
+            if ~iscategorical(batchList)
+                batchList = categorical(batchList);
+            end
             weeks = unique(batchList);
             nWeeks = numel(weeks);
             % Ask wich condition is the control
@@ -963,7 +973,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             
             %%% CONDITIONAL FINGERPRINT%%%
             % Select the variables and create a list of labels
-            varID = [17 21 31:34 39:42 47 49 50 52 53];
+            varID = [17 21 31:34 39:42 47 49 50 52 53]-1;
             varNames = {'Participation','Network Frequency','Intensity','Duration','Rise Time','Decay \tau','Sub Intensity','Sub Duration','Sub Rise Time','Sub Decay \tau','Inter spike interval','ISI CoV','Cell Frequency','# of Cell','Peak Participation'};
             nFeature = numel(varID);
             % Define the dimensions and create the space holders
@@ -976,6 +986,9 @@ classdef networkActivityApp < matlab.apps.AppBase
                 recT.Condition = removecats(recT.Condition);
                 conds = unique(recT.Condition);
                 nCond = numel(conds);
+                if ~iscategorical(recT.Week)
+                    recT.Week = categorical(recT.Week);
+                end
                 tempValue = zeros(nCond-1, nFeature);
                 % Calculate the matrix of differences
                 for v = 1:nFeature
@@ -1463,8 +1476,16 @@ classdef networkActivityApp < matlab.apps.AppBase
             updatePlot(app)
         end
         
-        function AnalysisMenuDetectSelected(app, event)
-            answer = questdlg('Detect spike in which set?', 'Spike detection', 'All FOVs', 'Current set', 'Current FOV', 'All FOVs');
+        function PushAnalysisPressed(app, event)
+            AnalysisMenuDetectSelected(app, event, varargin);
+        end
+        
+        function AnalysisMenuDetectSelected(app, event, varargin)
+            if nargin < 3
+                answer = questdlg('Detect spike in which set?', 'Spike detection', 'All FOVs', 'Current set', 'Current FOV', 'All FOVs');
+            else
+                answer = varargin{1};
+            end
             switch answer
                 case 'All FOVs'
                     imgFltr = find(~cellfun(@isempty, app.imgT{:,'RawIntensity'}));
@@ -1486,6 +1507,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
             app.CellNumberText.Enable = 'on';
+        end
+        
+        function PushQuantifyPressed(app, event)
+            AnalysisMenuQuantifySelected(app, event)
         end
         
         function AnalysisMenuQuantifySelected(app, event)
@@ -2069,16 +2094,38 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.AxesPlot.XLabel.String = 'Time (s)';
             app.AxesPlot.TickDir = 'out';
             % Create the components to interact with the images
+            % Image list (for multiple recording of the same FOV)
             app.ListImagesLabel = uicontrol(app.Figure, 'Style', 'text',...
                 'String', 'Image Files', 'Units', 'pixels',...
                 'Position', [1000 810 100 22], 'FontSize', 12);
             app.ListImages = uicontrol(app.Figure, 'Style', 'listbox',...
-                'Units', 'pixels', 'Position', [1000 410 200 400],...
+                'Units', 'pixels', 'Position', [1000 610 200 200],...
                 'Callback', createCallbackFcn(app, @ListImagesChange));
             app.ToggleViewStack = uicontrol(app.Figure, 'Style', 'togglebutton',...
                 'Units', 'pixels', 'Position', [1100 810 100 20],...
                 'String', 'Show movie', 'Enable', 'off',...
                 'Callback', createCallbackFcn(app, @ToggleViewStackPressed, true));
+            % Fast analysis interaction menu
+            app.ButtonAnalysis = uibuttongroup(app.Figure, 'Units', 'pixels',...
+                'Title', 'Detect spikes', 'Position', [1000 480 200 120], 'FontSize', 12);
+            app.RadioSpikesAll = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
+                'String', 'All FOVs', 'Units', 'pixels',...
+                'Position', [10 70 110 30], 'FontSize', 12, 'Enable', 'off');
+            app.RadioSpikesCurrent = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
+                'String', 'Current list', 'Units', 'pixels',...
+                'Position', [10 40 180 30], 'FontSize', 12, 'Enable', 'off');
+            app.RadioSpikesSelected = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
+                'String', 'Selected FOV', 'Units', 'pixels',...
+                'Position', [10 10 180 30], 'FontSize', 12, 'Enable', 'off');
+            app.PushAnalysis = uicontrol(app.Figure, 'Style', 'pushbutton',...
+                'String', 'Detect', 'Units', 'pixels', 'Position', [1000 450 100 30],...
+                'FontSize', 12, 'Enable', 'off',...
+                'Callback', createCallbackFcn(app, @PushAnalysisPressed, true));
+            app.PushQuantify = uicontrol(app.Figure, 'Style', 'pushbutton',...
+                'String', 'Quantify', 'Units', 'pixels', 'Position', [1100 450 100 30],...
+                'FontSize', 12, 'Enable', 'off',...
+                'Callback', createCallbackFcn(app, @PushQuantifyPressed, true));
+            % Traces plot options
             app.ButtonPlot = uibuttongroup(app.Figure, 'Units', 'pixels',...
                 'Title', 'Plot Type', 'Position', [1000 280 170 80], 'FontSize', 12,...
                 'SelectionChangedFcn', createCallbackFcn(app, @ButtonPlotChange, true));
@@ -2123,6 +2170,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 end
             end
             app.Figure.Visible = 'on';
+            app.bSave = false;
         end
         
         function optFigure = OptionMenuSelected(app, event)
@@ -2263,7 +2311,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.options.PeakMinDistance = 1;
                 app.options.PeakMinDuration = 2;
                 app.options.PeakMaxDuration = 5;
-                app.options.DetectTrace = 'Smooth';
+                app.options.DetectTrace = 'Raw';
                 app.options.Registration = false;
                 app.options.Reference = 'Tyrode';
                 app.options.Detrending = 'None';
@@ -2383,18 +2431,22 @@ classdef networkActivityApp < matlab.apps.AppBase
             s.networkActivity.LastPath.PersonalValue = app.options.LastPath;
             s.networkActivity.Registration.PersonalValue = app.options.Registration;
             s.networkActivity.Reference.PersonalValue = app.options.Reference;
+            s.networkActivity.Detrending.PersonalValue = app.options.Detrending;
+            s.networkActivity.DetrendSize.PersonalValue = app.options.DetrendSize;
         end
         
         function delete(app)
-            % If the data is not saved, ask if it needs to be saved
-            answer = questdlg('Do you want to save the data?', 'Save before closing');
-            switch answer
-                case 'Yes'
-                    FileMenuSaveSelected(app);
-                case 'No'
-                    % Nothing to add
-                case 'Cancel'
-                    return
+            if app.bSave
+                % If the data is not saved, ask if it needs to be saved
+                answer = questdlg('Do you want to save the data?', 'Save before closing');
+                switch answer
+                    case 'Yes'
+                        FileMenuSaveSelected(app);
+                    case 'No'
+                        % Nothing to add
+                    case 'Cancel'
+                        return
+                end
             end
             delete(app.Figure)
         end
