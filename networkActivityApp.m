@@ -170,10 +170,17 @@ classdef networkActivityApp < matlab.apps.AppBase
                 % For now detect manually the neurons
                 app.minMax.DIC = stretchlim(dicImage2);
             end
-            if app.imgT.ImgProperties(1) < size(dicImage2,1)
-                dicImage2 = imresize(dicImage2, [app.imgT.ImgProperties(1) app.imgT.ImgProperties(2)]);
+            if size(dicImage2,3) == 1
+                if app.imgT.ImgProperties(1) < size(dicImage2,1)
+                    dicImage2 = imresize(dicImage2, [app.imgT.ImgProperties(1) app.imgT.ImgProperties(2)]);
+                end
+                app.hDIC = imshow(imadjust(dicImage2, app.minMax.DIC), 'Parent', app.AxesDIC);
+            else
+                if app.imgT.ImgProperties(1) < size(dicImage2,1)
+                    dicImage2 = imresize(app.dicT.RawImage{whatDIC}, [app.imgT.ImgProperties(1) app.imgT.ImgProperties(2)]);
+                end
+                app.hDIC = imshow(dicImage2, 'Parent', app.AxesDIC);
             end
-            app.hDIC = imshow(imadjust(dicImage2, app.minMax.DIC), 'Parent', app.AxesDIC);
             app.AxesDIC.XLim = [0 size(dicImage2, 1)];
             app.AxesDIC.YLim = [0 size(dicImage2, 2)];
             app.AxesDIC.Title.String = dicName;
@@ -1353,6 +1360,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             fullT = app.fullT;
             save(savePath, 'dicT', 'imgT', 'fullT');
             cd(oldDir)
+            app.bSave = false;
         end
         
         function FileMenuExportSelected(app, event)
@@ -1445,6 +1453,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.AnalysisMenu.Enable = true;
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
+            app.bSave = true;
         end
         
         function DicMenuRemoveRoiSelected(app, event)
@@ -1507,6 +1516,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
             app.CellNumberText.Enable = 'on';
+            app.bSave = true;
         end
         
         function PushQuantifyPressed(app, event)
@@ -1564,6 +1574,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT.PeakParticipation = cellfun(@nanmean, app.imgT.NetworkPeaks) ./ app.imgT.nCell * 100;
             app.PlotMenu.Enable = 'on';
             app.FileMenuExport.Enable = 'on';
+            app.bSave = true;
         end
         
         function AnalysisMenuReCalculateSelected(app, event)
@@ -1577,6 +1588,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             end
             app.curDIC = app.dicT{startDIC, 'CellID'};
             getCellMask(app, startDIC)
+            app.bSave = true;
         end
         
         function PlotRasterSelected(app, event)
@@ -1858,6 +1870,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.imgT{imgFltr, 'SpikeIntensities'}{1}{cellFltr} = spikeInt{cellFltr, 1}(keepEvent);
             app.imgT{imgFltr, 'SpikeWidths'}{1}{cellFltr} = spikeWid{cellFltr, 1}(keepEvent);
             updatePlot(app);
+            app.bSave = true;
         end
         
         function TogglePeakAddPress(app, event)
@@ -1940,6 +1953,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                 app.imgT{imgFltr, 'SpikeWidths'}{1}{cellFltr} = sortedData(3,:);
             end
             updatePlot(app);
+            app.bSave = true;
         end
         
         function ToggleFixAxisPress(app, event)
