@@ -43,6 +43,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         RadioSpikesAll
         RadioSpikesCurrent
         RadioSpikesSelected
+        RadioSpikesTrace
         PushAnalysis
         PushQuantify
         ButtonPlot
@@ -439,7 +440,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         end
         
         % Detect the spike in one cell
-        function detectSpike(app, imgIdx)
+        function detectSpike(app, imgIdx, varargin)
             warning('off', 'all');
             % Gather the image data
             detrendData = cell2mat(app.imgT{imgIdx, 'DetrendData'});
@@ -481,18 +482,29 @@ classdef networkActivityApp < matlab.apps.AppBase
                 case 'Normalized MAD'
                     spikeThr = median(gradientTrace,2) + mad(gradientTrace,0,2) * app.options.SigmaThr * (-1 / (sqrt(2) * erfcinv(3/2)));
                 case 'Rolling StDev'
-                    warndlg(sprintf('Not implemented yet!\nUsed MAD instead.'), 'Failed detection')
-                    spikeThr = median(gradientTrace,2) + mad(gradientTrace,0,2) * app.options.SigmaThr;
+                    winSize = spikeMaxLeng + spikeDist;
+                    tempMean = movmean(gradientTrace, winSize, 2);
+                    tempStDev = std(diff(gradientTrace,[],2),[],2);
+                    spikeThr = tempMean + (app.options.SigmaThr*tempStDev);
             end
-            for trace = 1:nTraces
-                [spikeInts{trace,1}, spikeLocs{trace,1}, spikeWidths{trace,1}] = findpeaks(gradientTrace(trace,:), Fs, 'MinPeakDistance', spikeDist, ...
+            if nargin == 3
+                trace = varargin{1};
+                [spikeInt, spikeLoc, spikeWidth] = findpeaks(gradientTrace(trace,:), Fs, 'MinPeakDistance', spikeDist, ...
                     'MinPeakHeight', spikeThr(trace), 'MinPeakProminence', spikeProm, 'MinPeakWidth', spikeMinLeng, 'MaxPeakWidth', spikeMaxLeng);
+                app.imgT.SpikeLocations{imgIdx}{trace} = spikeLoc;
+                app.imgT.SpikeIntensities{imgIdx}{trace} = spikeInt;
+                app.imgT.SpikeWidths{imgIdx}{trace} = spikeWidth;
+            else
+                for trace = 1:nTraces
+                    [spikeInts{trace,1}, spikeLocs{trace,1}, spikeWidths{trace,1}] = findpeaks(gradientTrace(trace,:), Fs, 'MinPeakDistance', spikeDist, ...
+                        'MinPeakHeight', spikeThr(trace), 'MinPeakProminence', spikeProm, 'MinPeakWidth', spikeMinLeng, 'MaxPeakWidth', spikeMaxLeng);
+                end
+                spikeRaster = spikeRaster .* repmat((1:nTraces)', 1, nFrames);
+                app.imgT.SpikeLocations{imgIdx} = spikeLocs;
+                app.imgT.SpikeIntensities{imgIdx} = spikeInts;
+                app.imgT.SpikeWidths{imgIdx} = spikeWidths;
+                app.imgT.SpikeRaster{imgIdx} = spikeRaster;
             end
-            spikeRaster = spikeRaster .* repmat((1:nTraces)', 1, nFrames);
-            app.imgT.SpikeLocations{imgIdx} = spikeLocs;
-            app.imgT.SpikeIntensities{imgIdx} = spikeInts;
-            app.imgT.SpikeWidths{imgIdx} = spikeWidths;
-            app.imgT.SpikeRaster{imgIdx} = spikeRaster;
             warning('on', 'all');
             updatePlot(app);
         end
@@ -789,13 +801,18 @@ classdef networkActivityApp < matlab.apps.AppBase
                 switch app.options.PeakMinHeight
                     case 'MAD'
                         spikeThr = median(tempData(cellN,:)) + mad(tempData(cellN,:)) * app.options.SigmaThr;
+                        plot(app.AxesPlot, app.AxesPlot.XLim, [spikeThr spikeThr], ':b')
                     case 'Normalized MAD'
                         spikeThr = median(tempData(cellN,:)) + mad(tempData(cellN,:)) * app.options.SigmaThr * (-1 / (sqrt(2) * erfcinv(3/2)));
+                        plot(app.AxesPlot, app.AxesPlot.XLim, [spikeThr spikeThr], ':b')
                     case 'Rolling StDev'
-                        warndlg(sprintf('Not implemented yet!\nUsed MAD instead.'), 'Failed detection')
-                        spikeThr = median(tempData(cellN,:)) + mad(tempData(cellN,:)) * app.options.SigmaThr;
+                        winSize = (app.options.PeakMaxDuration / Fs) + (app.options.PeakMinDistance / Fs);
+                        tempMean = movmean(tempData(cellN,:), winSize, 2);
+                        tempStDev = std(diff(tempData(cellN,:),[],2),[],2);
+                        spikeThr = tempMean + (app.options.SigmaThr*tempStDev);
+                        plot(app.AxesPlot, time, spikeThr, ':b')
                 end
-                plot(app.AxesPlot, app.AxesPlot.XLim, [spikeThr spikeThr], ':b')
+                
                 % show in the DIC which one whe are looking at
                 if numel(app.curCell) == 2
                     oldCell = app.curCell(2);
@@ -1322,6 +1339,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                         app.imgT = [app.imgT; networkFiles.imgT];
                     end
                     app.AnalysisMenu.Enable = true;
+                    app.PushAnalysis.Enable = 'on';
+                    app.ButtonAnalysis.Enable = 'on';
                     app.ToggleViewStack.Enable = 'on';
                 end
                 if isfield(networkFiles, 'fullT')
@@ -1451,6 +1470,8 @@ classdef networkActivityApp < matlab.apps.AppBase
             getIntensityvalues(app)
             updatePlot(app)
             app.AnalysisMenu.Enable = true;
+            app.PushAnalysis.Enable = true;
+            app.ButtonAnalysis.Enable = true;
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
             app.bSave = true;
@@ -1484,31 +1505,30 @@ classdef networkActivityApp < matlab.apps.AppBase
             %getIntensityvalues(app)
             updatePlot(app)
         end
-        
-        function PushAnalysisPressed(app, event)
-            AnalysisMenuDetectSelected(app, event, varargin);
-        end
-        
+                
         function AnalysisMenuDetectSelected(app, event, varargin)
-            if nargin < 3
-                answer = questdlg('Detect spike in which set?', 'Spike detection', 'All FOVs', 'Current set', 'Current FOV', 'All FOVs');
-            else
-                answer = varargin{1};
-            end
-            switch answer
+            currTrace = 0;
+            switch app.ButtonAnalysis.SelectedObject.String
                 case 'All FOVs'
                     imgFltr = find(~cellfun(@isempty, app.imgT{:,'RawIntensity'}));
-                case 'Current set'
+                case 'Current list'
                     dicID = app.dicT.ExperimentID{contains(app.dicT.CellID, app.curDIC)};
                     imgFltr = find(strcmp(app.imgT.ExperimentID, dicID));
-                case 'Current FOV'
+                case 'Selected FOV'
                     imgFltr = find(strcmp(app.imgT.CellID, app.curStak));
+                case 'Selected trace'
+                    imgFltr = find(strcmp(app.imgT.CellID, app.curStak));
+                    currTrace = str2double(app.CellNumberText.String);
             end
             nImg = numel(imgFltr);
             hWait = waitbar(0, 'Detecting spike in data');
             for i = 1:nImg
                 waitbar(i/nImg, hWait, sprintf('Detecting spike in data %0.2f%%', i/nImg*100));
-                detectSpike(app, imgFltr(i))
+                if currTrace > 0
+                    detectSpike(app, imgFltr(i), currTrace)
+                else
+                    detectSpike(app, imgFltr(i))
+                end
             end
             delete(hWait)
             app.TogglePeakRemove.Enable = 'on';
@@ -1517,10 +1537,6 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.RadioAllMean.Enable = 'on';
             app.CellNumberText.Enable = 'on';
             app.bSave = true;
-        end
-        
-        function PushQuantifyPressed(app, event)
-            AnalysisMenuQuantifySelected(app, event)
         end
         
         function AnalysisMenuQuantifySelected(app, event)
@@ -2121,22 +2137,25 @@ classdef networkActivityApp < matlab.apps.AppBase
                 'Callback', createCallbackFcn(app, @ToggleViewStackPressed, true));
             % Fast analysis interaction menu
             app.ButtonAnalysis = uibuttongroup(app.Figure, 'Units', 'pixels',...
-                'Title', 'Detect spikes', 'Position', [1000 480 200 120], 'FontSize', 12);
+                'Title', 'Detect spikes', 'Position', [1000 450 200 150], 'FontSize', 12, 'Enable', 'off');
             app.RadioSpikesAll = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
                 'String', 'All FOVs', 'Units', 'pixels',...
-                'Position', [10 70 110 30], 'FontSize', 12, 'Enable', 'off');
+                'Position', [10 100 110 30], 'FontSize', 12);
             app.RadioSpikesCurrent = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
                 'String', 'Current list', 'Units', 'pixels',...
-                'Position', [10 40 180 30], 'FontSize', 12, 'Enable', 'off');
+                'Position', [10 70 180 30], 'FontSize', 12);
             app.RadioSpikesSelected = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
                 'String', 'Selected FOV', 'Units', 'pixels',...
-                'Position', [10 10 180 30], 'FontSize', 12, 'Enable', 'off');
+                'Position', [10 40 180 30], 'FontSize', 12);
+            app.RadioSpikesTrace = uicontrol(app.ButtonAnalysis, 'Style', 'radiobutton',...
+                'String', 'Selected trace', 'Units', 'pixels',...
+                'Position', [10 10 180 30], 'FontSize', 12);
             app.PushAnalysis = uicontrol(app.Figure, 'Style', 'pushbutton',...
-                'String', 'Detect', 'Units', 'pixels', 'Position', [1000 450 100 30],...
+                'String', 'Detect', 'Units', 'pixels', 'Position', [1000 400 100 30],...
                 'FontSize', 12, 'Enable', 'off',...
-                'Callback', createCallbackFcn(app, @PushAnalysisPressed, true));
+                'Callback', createCallbackFcn(app, @AnalysisMenuDetectSelected, true));
             app.PushQuantify = uicontrol(app.Figure, 'Style', 'pushbutton',...
-                'String', 'Quantify', 'Units', 'pixels', 'Position', [1100 450 100 30],...
+                'String', 'Quantify', 'Units', 'pixels', 'Position', [1100 400 100 30],...
                 'FontSize', 12, 'Enable', 'off',...
                 'Callback', createCallbackFcn(app, @PushQuantifyPressed, true));
             % Traces plot options
