@@ -105,7 +105,8 @@ classdef networkActivityApp < matlab.apps.AppBase
                 return
             end
             % if there is data plot the data
-            [~, curStack] = fileparts(app.imgT.Filename{strcmp(app.imgT.CellID,app.ListImages.String{1})});
+            stackName = app.imgT.Filename{strcmp(app.imgT.CellID,app.ListImages.String{1})};
+            [~, curStack] = fileparts(stackName);
             app.curStak = app.ListImages.String{1};
             if ~isempty(app.imgT)
                 if ~isempty(cell2mat((app.imgT{strcmp(app.imgT.CellID, app.curStak),'RawIntensity'})))
@@ -745,7 +746,7 @@ classdef networkActivityApp < matlab.apps.AppBase
         % Update the plot
         function updatePlot(app)
             % First get the data
-            imgID = contains(app.imgT.Filename, app.curStak);
+            imgID = contains(app.imgT.CellID, app.curStak);
             tempData = app.imgT.DetrendData{imgID};
             if isempty(tempData)
                 return
@@ -997,8 +998,10 @@ classdef networkActivityApp < matlab.apps.AppBase
             
             %%% CONDITIONAL FINGERPRINT%%%
             % Select the variables and create a list of labels
-            varID = [17 21 31:34 39:42 47 49 50 52 53]-1;
-            varNames = {'Participation','Network Frequency','Intensity','Duration','Rise Time','Decay \tau','Sub Intensity','Sub Duration','Sub Rise Time','Sub Decay \tau','Inter spike interval','ISI CoV','Cell Frequency','# of Cell','Peak Participation'};
+            %varID = [17 21 31:34 39:42 47 49 50 52 53]+2;
+            %varNames = {'Participation','Network Frequency','Intensity','Duration','Rise Time','Decay \tau','Sub Intensity','Sub Duration','Sub Rise Time','Sub Decay \tau','Inter spike interval','ISI CoV','Cell Frequency','# of Cell','Peak Participation'};
+            varID = [19 23 33:36 49 51 52 54 55];
+            varNames = {'Participation','Network Frequency','Intensity','Duration','Rise Time','Decay \tau','Inter spike interval','ISI CoV','Cell Frequency','# of Cell','Peak Participation'};
             nFeature = numel(varID);
             % Define the dimensions and create the space holders
             matValue = [];
@@ -1017,18 +1020,27 @@ classdef networkActivityApp < matlab.apps.AppBase
                 % Calculate the matrix of differences
                 for v = 1:nFeature
                     tempData = recT{:,varID(v)};
+                    % remove Outliers
+                    realFltr = ~isoutlier(tempData);
+                    tempData = tempData(realFltr);
+                    realWeek = recT{realFltr,'Week'};
+                    realCond = recT{realFltr,'Condition'};
                     % Loop through the weeks to normalize the data per culture batch
                     for w = 1:nWeeks
-                        weekFltr = recT.Week == weeks(w);
-                        controlFltr = recT.Condition == contID;
+                        weekFltr = realWeek == weeks(w);
+                        controlFltr = realCond == contID;
+                        % Try to get a Z score
                         tempMean = mean(tempData(controlFltr & weekFltr), 'omitnan');
+                        tempStd = std(tempData(controlFltr & weekFltr), 'omitnan');
                         if tempMean > 0 % required in the case that there is no network activity (as in 1mM)
-                            tempData(weekFltr) = tempData(weekFltr) / tempMean;
+                            %tempData(weekFltr) = tempData(weekFltr) / tempMean;
+                            tempData(weekFltr) = (tempData(weekFltr) - tempMean) / tempStd;
                         end
                     end
                     % Store the data in a matrix
                     for c = 2:nCond
-                        tempValue(c-1, v) = log2(mean(tempData(recT.Condition == conds(c) & tempData > 0), 'omitnan'));
+                        %tempValue(c-1, v) = log2(mean(tempData(realCond == conds(c) & tempData > 0), 'omitnan'));
+                        tempValue(c-1, v) = mean(tempData(realCond == conds(c)), 'omitnan');
                         if v == 1
                             groupNames{gr} = sprintf('%s %s', conds(c), recID{r});
                             gr = gr+1;
@@ -1074,20 +1086,49 @@ classdef networkActivityApp < matlab.apps.AppBase
                 recT = app.imgT(app.imgT.RecID == recID(r), :);
                 recT.Condition = myCondition(app.imgT.RecID == recID(r));
                 recT.Condition = removecats(recT.Condition);
+                if ~iscategorical(recT.Week)
+                    recT.Week = categorical(recT.Week);
+                end
                 uniCond = categories(recT.Condition);
                 nCond = numel(uniCond);
                 figure('Name', sprintf('Overview of recording: %s', recID{r}))
-                cmap = lines;
+                % Colormap base of HEX codes
+                cmap1 = {'#000000', '#9100AD', '#61AD00',...
+                         '#4D4D4D', '#9B00BA', '#69BA00',...
+                         '#8C8C8C', '#D000FA', '#8EFA00'};
+                cmap = nan(length(cmap1), 3);
+                for c = 1:length(cmap1)
+                    cmap(c,:) = sscanf(cmap1{c}(2:end),'%2x%2x%2x',[1 3])/255;
+                end
                 for p = 1:nFeature
                     % Create the main plot
                     subplot(3,5,p); hold on
                     yData = recT{:,varID(p)};
+                    % remove Outliers
+                    realFltr = ~isoutlier(yData);
+                    yData = yData(realFltr);
+                    realWeek = recT{realFltr,'Week'};
+                    realCond = recT{realFltr,'Condition'};
 %                     QCD = nan(nCond, nWeeks);
-                    % CI
-                    CI_Cont = CIFcn(recT{recT.Condition==contID, varID(p)}, 95);
-                    patch([0 nCond+1 nCond+1 0], [CI_Cont(1) CI_Cont(1) CI_Cont(2) CI_Cont(2)], cmap(1,:), 'EdgeColor', 'none', 'FaceAlpha',.1)
                     for c = 1:nCond
-                        condFltr = recT.Condition == uniCond(c);
+                        condFltr = realCond == uniCond(c);
+                        % Loop through the weeks to normalize the data per culture batch
+                        bNorm = true;
+                        if bNorm
+                            for w = 1:nWeeks
+                                weekFltr = realWeek == weeks(w);
+                                controlFltr = realCond == contID;
+                                tempMean = mean(yData(controlFltr & weekFltr), 'omitnan');
+                                if tempMean > 0 % required in the case that there is no network activity (as in 1mM)
+                                    yData(weekFltr) = yData(weekFltr) / tempMean;
+                                end
+                            end
+                        end
+                        if c == 1
+                            % CI
+                            CI_Cont = CIFcn(yData(condFltr), 95);
+                            patch([0 nCond+1 nCond+1 0], [CI_Cont(1) CI_Cont(1) CI_Cont(2) CI_Cont(2)], cmap(1,:), 'EdgeColor', 'none', 'FaceAlpha',.1)
+                        end
                         tempY = sort(yData(condFltr));
                         quantY = quantile(tempY, [0.25 0.5 0.75]);
                         minW = quantY(1) - 1.5*(quantY(3)-quantY(1));
@@ -1104,7 +1145,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                         % Add the data points
                         x = linspace(c - 0.15, c + 0.15, nWeeks);
                         for w = 1:nWeeks
-                            weekFltr = recT.Week == weeks(w);
+                            weekFltr = realWeek == weeks(w);
                             if sum(weekFltr & condFltr) > 0
                                 plot(x(w),yData(weekFltr & condFltr), 'o', 'MarkerEdgeColor', cmap(c,:), 'MarkerSize',4,'MarkerFaceColor','w')
                                 % calculate the quartile coefficient of dispersion
