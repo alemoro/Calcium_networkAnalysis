@@ -1381,6 +1381,7 @@ classdef networkActivityApp < matlab.apps.AppBase
                     end
                     app.AnalysisMenu.Enable = true;
                     app.PushAnalysis.Enable = 'on';
+                    app.PushQuantify.Enable = 'on';
                     app.ButtonAnalysis.Enable = 'on';
                     app.ToggleViewStack.Enable = 'on';
                 end
@@ -1510,9 +1511,9 @@ classdef networkActivityApp < matlab.apps.AppBase
             updateDIC(app, true)
             getIntensityvalues(app)
             updatePlot(app)
-            app.AnalysisMenu.Enable = true;
-            app.PushAnalysis.Enable = true;
-            app.ButtonAnalysis.Enable = true;
+            app.AnalysisMenu.Enable = 'on';
+            app.PushAnalysis.Enable = 'on';
+            app.ButtonAnalysis.Enable = 'on';
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
             app.bSave = true;
@@ -1577,6 +1578,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.RadioSingleTrace.Enable = 'on';
             app.RadioAllMean.Enable = 'on';
             app.CellNumberText.Enable = 'on';
+            app.PushQuantify.Enable = 'on';
             app.bSave = true;
         end
         
@@ -2198,7 +2200,7 @@ classdef networkActivityApp < matlab.apps.AppBase
             app.PushQuantify = uicontrol(app.Figure, 'Style', 'pushbutton',...
                 'String', 'Quantify', 'Units', 'pixels', 'Position', [1100 400 100 30],...
                 'FontSize', 12, 'Enable', 'off',...
-                'Callback', createCallbackFcn(app, @PushQuantifyPressed, true));
+                'Callback', createCallbackFcn(app, @AnalysisMenuQuantifySelected, true));
             % Traces plot options
             app.ButtonPlot = uibuttongroup(app.Figure, 'Units', 'pixels',...
                 'Title', 'Plot Type', 'Position', [1000 280 170 80], 'FontSize', 12,...
