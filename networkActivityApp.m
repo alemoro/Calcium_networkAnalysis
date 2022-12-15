@@ -647,7 +647,11 @@ classdef networkActivityApp < matlab.apps.AppBase
             spikeRise = cell(1, nTraces);
             spikeDecay = cell(1, nTraces);
             for t = 1:nTraces
-                smoothData = wdenoise(traceData(t,:), 'DenoisingMethod', 'BlockJS');
+                if contains(app.options.DetectTrace, 'Raw')
+                    smoothData = traceData(t,:);
+                else
+                    smoothData = wdenoise(traceData(t,:), 'DenoisingMethod', 'BlockJS');
+                end
                 % Calculate all the local minima
                 allValleys = islocalmin(smoothData,2);
                 spikeLocs = spikeData{t} + 1;
